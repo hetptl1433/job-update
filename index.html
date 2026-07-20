@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#10233f" />
+  <title>Het's Interview Pipeline</title>
+  <meta name="description" content="Live interview, offer and follow-up tracker." />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
+  <script src="data/seed.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <aside class="side-rail" aria-label="Navigation">
+      <div class="brand-mark"><span>HP</span></div>
+      <div class="rail-icon active" data-icon="chart"></div>
+      <div class="rail-icon" data-icon="briefcase"></div>
+      <div class="rail-spacer"></div>
+      <div class="rail-avatar">H</div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div><h1>Interview Pipeline</h1><p>One place to track calls, interviews, offers and follow-ups.</p></div>
+        <div class="top-actions">
+          <div id="syncIndicator" class="sync-indicator loading"><span class="sync-dot"></span><span id="syncText">Loading</span></div>
+          <button id="importButton" class="button secondary"><span data-icon="upload"></span> Import Excel</button>
+          <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.json" hidden />
+          <button id="exportButton" class="button secondary"><span data-icon="download"></span> Export Excel</button>
+          <button id="addButton" class="button primary"><span data-icon="plus"></span> Add interview</button>
+        </div>
+      </header>
+
+      <section id="metricGrid" class="metric-grid"></section>
+
+      <section class="pipeline-panel">
+        <div class="pipeline-copy"><h2>Pipeline health</h2><p id="pipelineCopy"></p></div>
+        <div id="pipelineBar" class="pipeline-bar" aria-label="Pipeline status distribution"></div>
+        <div class="pipeline-legend"><span><i class="legend-offers"></i>Offers</span><span><i class="legend-active"></i>Active</span><span><i class="legend-update"></i>Needs update</span><span><i class="legend-rejected"></i>Rejected</span></div>
+      </section>
+
+      <section class="tracker-section">
+        <div class="tracker-toolbar">
+          <div class="tabs" id="filterTabs"></div>
+          <div class="search-box"><span data-icon="search"></span><input id="searchInput" placeholder="Search company, role or recruiter" /></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Company & role</th><th>Stage</th><th>Status</th><th>Interview</th><th>Next action</th><th>Follow-up</th><th></th></tr></thead>
+            <tbody id="trackerBody"></tbody>
+          </table>
+          <div id="emptyState" class="empty-state" hidden><span data-icon="search"></span><h3>No interviews found</h3><p>Try another filter or search term.</p></div>
+        </div>
+      </section>
+
+      <footer class="footer-bar">
+        <div><span data-icon="lock"></span><span id="storageCopy">Loading storage status…</span></div>
+        <div class="password-field"><label for="adminPassword">Admin password</label><input id="adminPassword" type="password" placeholder="Only needed if configured" /></div>
+        <button id="saveButton" class="button save-button"><span data-icon="save"></span> Save changes</button>
+        <span id="lastSync" class="last-sync"></span>
+      </footer>
+    </section>
+  </main>
+
+  <div id="modalBackdrop" class="modal-backdrop" hidden>
+    <form id="editForm" class="edit-modal">
+      <div class="modal-head"><div><h2 id="modalTitle">Update interview</h2><p>Keep the status and next action current.</p></div><button id="closeModal" type="button" class="icon-button" aria-label="Close"><span data-icon="close"></span></button></div>
+      <div class="form-grid">
+        <label class="form-field"><span>Company</span><input name="company" required /></label>
+        <label class="form-field"><span>Role</span><input name="role" required /></label>
+        <label class="form-field"><span>Stage</span><select name="stage"></select></label>
+        <label class="form-field"><span>Status</span><select name="status"></select></label>
+        <label class="form-field"><span>Priority</span><select name="priority"></select></label>
+        <label class="form-field"><span>Invite date</span><input type="date" name="inviteDate" /></label>
+        <label class="form-field"><span>Interview date</span><input type="date" name="interviewDate" /></label>
+        <label class="form-field"><span>Follow-up date</span><input type="date" name="followUpDate" /></label>
+        <label class="form-field"><span>Contact / recruiter</span><input name="contact" /></label>
+        <label class="form-field"><span>Mode / location</span><input name="mode" /></label>
+        <label class="form-field wide"><span>Next action</span><input name="nextAction" /></label>
+        <label class="form-field wide"><span>Source / evidence</span><input name="source" /></label>
+        <label class="form-field wide"><span>Notes</span><textarea name="notes" rows="4"></textarea></label>
+      </div>
+      <div class="modal-actions">
+        <div><button id="deleteButton" type="button" class="button danger"><span data-icon="trash"></span> Delete</button></div>
+        <div class="right-actions"><a id="sourceButton" class="button secondary" target="_blank" rel="noreferrer"><span data-icon="external"></span> Open source</a><button id="cancelButton" type="button" class="button secondary">Cancel</button><button class="button primary" type="submit">Update tracker</button></div>
+      </div>
+    </form>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+</body>
+</html>
