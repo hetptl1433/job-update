@@ -11,13 +11,18 @@ function isConfigured() {
 }
 
 function isAuthorized(req) {
-  const required = process.env.ADMIN_PASSWORD;
-  if (!required) return true;
-  return req.headers['x-admin-password'] === required;
+  return req.headers['x-admin-password'] === process.env.ADMIN_PASSWORD;
 }
 
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, private');
+
+  if (!process.env.ADMIN_PASSWORD) {
+    return res.status(503).json({
+      error: 'ADMIN_PASSWORD is not configured',
+      locked: true,
+    });
+  }
 
   if (!isAuthorized(req)) {
     return res.status(401).json({ error: 'Admin password required', locked: true });
