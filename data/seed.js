@@ -1,0 +1,1 @@
+window.SEED_DATA = [];
