@@ -3,97 +3,94 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#f4f7fb" />
-  <title>Het's Job Status</title>
-  <meta name="description" content="Company and interview status at a glance." />
-  <link rel="stylesheet" href="styles-mobile.css?v=3" />
+  <meta name="theme-color" content="#0d1b2a" />
+  <title>Het's Job Radar</title>
+  <meta name="description" content="Het's interview and job status feed." />
+  <link rel="stylesheet" href="styles-radar.css?v=5" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
-  <script src="data/seed.js?v=3" defer></script>
-  <script src="app-mobile.js?v=3" defer></script>
+  <script src="data/seed.js?v=5" defer></script>
+  <script src="app-radar.js?v=5" defer></script>
 </head>
 <body>
-  <main class="app-shell">
-    <section class="workspace">
-      <header class="topbar">
-        <div class="title-block">
-          <div>
-            <h1>Job Status</h1>
-            <p>Company and current status at a glance.</p>
-          </div>
-          <button id="addButton" class="button primary"><span data-icon="plus"></span> Add</button>
+  <main class="shell">
+    <header class="hero">
+      <div class="hero-topline">
+        <div class="brand-lockup">
+          <div class="radar-mark" aria-hidden="true"><i></i><b></b></div>
+          <div><span class="kicker">HET'S SEARCH</span><h1>Job radar</h1></div>
         </div>
+        <div id="syncIndicator" class="sync-indicator local"><span class="sync-dot"></span><span id="syncText">Loading</span></div>
+      </div>
+      <div class="attention-block">
+        <div><strong id="attentionCount">0</strong><p>need your attention</p></div>
+        <span id="attentionNote">Nothing urgent right now</span>
+      </div>
+      <div id="metricGrid" class="metric-strip" aria-label="Pipeline summary"></div>
+    </header>
 
-        <div class="top-actions">
-          <div id="syncIndicator" class="sync-indicator local"><span class="sync-dot"></span><span id="syncText">Loading</span></div>
-          <div class="utility-actions">
-            <button id="importButton" class="button secondary"><span data-icon="upload"></span> Import</button>
-            <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.json" hidden />
-            <button id="exportButton" class="button secondary"><span data-icon="download"></span> Export</button>
-          </div>
-        </div>
-      </header>
-
-      <section id="metricGrid" class="metric-grid" aria-label="Pipeline summary"></section>
-
-      <section class="tracker-section">
-        <div class="tracker-toolbar">
-          <div class="tabs" id="filterTabs"></div>
-          <div class="search-box"><span data-icon="search"></span><input id="searchInput" aria-label="Search companies" placeholder="Search company or role" /></div>
-        </div>
-
-        <div class="table-wrap">
-          <div id="trackerBody" class="status-board"></div>
-          <div id="emptyState" class="empty-state" hidden>
-            <span data-icon="search"></span>
-            <h3>No companies found</h3>
-            <p>Try another filter or search.</p>
-          </div>
-        </div>
-      </section>
-
-      <footer class="footer-bar">
-        <div><span data-icon="lock"></span><span id="storageCopy">Loading tracker data…</span></div>
-        <div class="password-field"><label for="adminPassword">Admin password</label><input id="adminPassword" type="password" placeholder="Enter to sync edits" /></div>
-        <button id="saveButton" class="button save-button"><span data-icon="save"></span> Save</button>
-        <span id="lastSync" class="last-sync"></span>
-      </footer>
+    <section class="controls" aria-label="Filter applications">
+      <div class="search-box"><span data-icon="search"></span><input id="searchInput" aria-label="Search companies" placeholder="Search company or role" /></div>
+      <div class="tabs" id="filterTabs"></div>
     </section>
+
+    <section class="feed-section">
+      <div class="feed-heading">
+        <div><span>PIPELINE</span><h2 id="feedTitle">Everything</h2></div>
+        <small id="resultCount">0 companies</small>
+      </div>
+      <div id="trackerBody" class="status-feed"></div>
+      <div id="emptyState" class="empty-state" hidden><div class="empty-radar"></div><h3>No matches</h3><p>Try another status or search.</p></div>
+    </section>
+
+    <footer class="page-footer"><span id="storageCopy">Loading tracker data…</span><span id="lastSync"></span></footer>
   </main>
+
+  <nav class="bottom-dock" aria-label="Tracker actions">
+    <button id="addButton" class="dock-primary"><span data-icon="plus"></span><span>Add company</span></button>
+    <button id="toolsButton" class="dock-more" aria-label="Open tracker tools" aria-expanded="false"><span data-icon="more"></span></button>
+  </nav>
+
+  <div id="toolsBackdrop" class="tools-backdrop" hidden>
+    <section class="tools-sheet" aria-label="Tracker tools">
+      <div class="sheet-grabber"></div>
+      <div class="sheet-heading"><div><span>TRACKER TOOLS</span><h2>Manage your data</h2></div><button id="closeTools" class="icon-button" aria-label="Close"><span data-icon="close"></span></button></div>
+      <div class="tool-grid">
+        <button id="importButton" class="tool-action"><span data-icon="upload"></span><b>Import</b><small>Excel or JSON</small></button>
+        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.json" hidden />
+        <button id="exportButton" class="tool-action"><span data-icon="download"></span><b>Export</b><small>Download Excel</small></button>
+      </div>
+      <label class="password-field"><span>Admin password</span><input id="adminPassword" type="password" placeholder="Enter password" /></label>
+      <button id="saveButton" class="save-button"><span data-icon="save"></span> Save online</button>
+    </section>
+  </div>
 
   <div id="modalBackdrop" class="modal-backdrop" hidden>
     <form id="editForm" class="edit-modal">
-      <div class="modal-head">
-        <div><h2 id="modalTitle">Update status</h2><p>Keep the company status and next action current.</p></div>
-        <button id="closeModal" type="button" class="icon-button" aria-label="Close"><span data-icon="close"></span></button>
-      </div>
-
+      <div class="sheet-grabber"></div>
+      <div class="modal-head"><div><span>APPLICATION</span><h2 id="modalTitle">Update status</h2></div><button id="closeModal" type="button" class="icon-button" aria-label="Close"><span data-icon="close"></span></button></div>
       <div class="form-grid">
-        <label class="form-field"><span>Company</span><input name="company" required /></label>
-        <label class="form-field"><span>Role</span><input name="role" required /></label>
-        <label class="form-field"><span>Stage</span><select name="stage"></select></label>
+        <label class="form-field wide"><span>Company</span><input name="company" required /></label>
+        <label class="form-field wide"><span>Role</span><input name="role" required /></label>
         <label class="form-field"><span>Status</span><select name="status"></select></label>
+        <label class="form-field"><span>Stage</span><select name="stage"></select></label>
         <label class="form-field"><span>Priority</span><select name="priority"></select></label>
+        <label class="form-field"><span>Follow-up</span><input type="date" name="followUpDate" /></label>
         <label class="form-field"><span>Invite date</span><input type="date" name="inviteDate" /></label>
         <label class="form-field"><span>Interview date</span><input type="date" name="interviewDate" /></label>
-        <label class="form-field"><span>Follow-up date</span><input type="date" name="followUpDate" /></label>
-        <label class="form-field"><span>Contact / recruiter</span><input name="contact" /></label>
-        <label class="form-field"><span>Mode / location</span><input name="mode" /></label>
-        <label class="form-field wide"><span>Next action</span><input name="nextAction" /></label>
+        <label class="form-field wide"><span>Next action</span><textarea name="nextAction" rows="3"></textarea></label>
+        <label class="form-field wide"><span>Contact</span><input name="contact" /></label>
+        <label class="form-field wide"><span>Mode / location</span><input name="mode" /></label>
         <label class="form-field wide"><span>Source / evidence</span><input name="source" /></label>
-        <label class="form-field wide"><span>Notes</span><textarea name="notes" rows="4"></textarea></label>
+        <label class="form-field wide"><span>Notes</span><textarea name="notes" rows="3"></textarea></label>
       </div>
-
       <div class="modal-actions">
-        <div><button id="deleteButton" type="button" class="button danger"><span data-icon="trash"></span> Delete</button></div>
-        <div class="right-actions">
-          <a id="sourceButton" class="button secondary" target="_blank" rel="noreferrer"><span data-icon="external"></span> Source</a>
-          <button id="cancelButton" type="button" class="button secondary">Cancel</button>
-          <button class="button primary" type="submit">Update</button>
-        </div>
+        <button id="deleteButton" type="button" class="delete-button"><span data-icon="trash"></span> Delete</button>
+        <a id="sourceButton" class="source-button" target="_blank" rel="noreferrer"><span data-icon="external"></span> Source</a>
+        <button id="cancelButton" type="button" class="cancel-button">Cancel</button>
+        <button class="update-button" type="submit">Update</button>
       </div>
     </form>
   </div>
-
   <div id="toast" class="toast" hidden></div>
 </body>
 </html>
