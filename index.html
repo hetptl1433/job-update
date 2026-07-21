@@ -6,9 +6,10 @@
   <meta name="theme-color" content="#10233f" />
   <title>Het's Interview Pipeline</title>
   <meta name="description" content="Live interview, offer and follow-up tracker." />
+  <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
   <script src="data/seed.js" defer></script>
-  <script src="loader.js" defer></script>
+  <script src="app.js" defer></script>
 </head>
 <body>
   <main class="app-shell">
@@ -56,7 +57,7 @@
 
       <footer class="footer-bar">
         <div><span data-icon="lock"></span><span id="storageCopy">Loading storage status…</span></div>
-        <div class="password-field"><label for="adminPassword">Admin password</label><input id="adminPassword" type="password" placeholder="Only needed if configured" /></div>
+        <div class="password-field"><label for="adminPassword">Admin password</label><input id="adminPassword" type="password" placeholder="Enter password, then press Enter" /></div>
         <button id="saveButton" class="button save-button"><span data-icon="save"></span> Save changes</button>
         <span id="lastSync" class="last-sync"></span>
       </footer>
