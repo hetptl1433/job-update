@@ -1,5 +1,6 @@
 import AuthenticationServices
 import BackgroundTasks
+import Combine
 import Foundation
 import Security
 import SwiftData
@@ -103,12 +104,12 @@ final class AppSession: ObservableObject {
             item.company = dto.company
             item.role = dto.role
             item.stage = dto.stage
-            item.inviteDate = dto.inviteDate.flatMap(DateFormatters.api.date)
-            item.interviewDate = dto.interviewDate.flatMap(DateFormatters.api.date)
+            item.inviteDate = dto.inviteDate.flatMap { DateFormatters.api.date(from: $0) }
+            item.interviewDate = dto.interviewDate.flatMap { DateFormatters.api.date(from: $0) }
             item.statusRaw = dto.status
             item.priorityRaw = dto.priority
             item.nextAction = dto.nextAction
-            item.followUpDate = dto.followUpDate.flatMap(DateFormatters.api.date)
+            item.followUpDate = dto.followUpDate.flatMap { DateFormatters.api.date(from: $0) }
             item.contact = dto.contact
             item.mode = dto.mode
             item.notes = dto.notes
@@ -182,7 +183,7 @@ final class OAuthSession: NSObject, ASWebAuthenticationPresentationContextProvid
         components.queryItems = [URLQueryItem(name: "callback", value: "jobradar://oauth/\(provider.rawValue)")]
         guard let url = components.url else { throw URLError(.badURL) }
 
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             session = ASWebAuthenticationSession(url: url, callbackURLScheme: "jobradar") { callback, error in
                 if let error { continuation.resume(throwing: error) }
                 else if let callback { continuation.resume(returning: callback) }
@@ -198,7 +199,7 @@ final class OAuthSession: NSObject, ASWebAuthenticationPresentationContextProvid
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
-            .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+            .first { $0.isKeyWindow } ?? UIWindow(frame: .zero)
     }
 }
 
