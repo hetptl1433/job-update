@@ -10,6 +10,6 @@ struct RootView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
         }
-        .tint(.radarMint)
+        .tint(Color.radarMint)
     }
 }
