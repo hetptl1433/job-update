@@ -19,11 +19,20 @@ jobs:
         run: xcodegen generate
       - name: Build for iOS Simulator
         working-directory: ios/JobRadar
+        shell: bash
         run: |
+          set -o pipefail
           xcodebuild \
             -project JobRadar.xcodeproj \
             -scheme JobRadar \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            build 2>&1 | tee build.log
+      - name: Upload Xcode build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: ios/JobRadar/build.log
+          if-no-files-found: warn
