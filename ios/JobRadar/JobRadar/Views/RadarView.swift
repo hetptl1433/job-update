@@ -71,7 +71,7 @@ struct RadarView: View {
                 ForEach(Filter.allCases) { value in
                     Button(value.rawValue) { withAnimation(.snappy) { filter = value } }
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(filter == value ? Color.radarInk : .secondary)
+                        .foregroundStyle(filter == value ? Color.radarInk : Color.secondary)
                         .padding(.horizontal, 14).padding(.vertical, 9)
                         .background(filter == value ? Color.radarMint : Color.white, in: Capsule())
                 }
@@ -83,7 +83,7 @@ struct RadarView: View {
         VStack(spacing: 14) {
             RadarPulse().frame(width: 66, height: 66)
             Text("Nothing on this frequency").font(.title3.bold())
-            Text("Change the filter or add a company.").font(.subheadline).foregroundStyle(.secondary)
+            Text("Change the filter or add a company.").font(.subheadline).foregroundStyle(Color.secondary)
         }
     }
 
@@ -101,30 +101,30 @@ private struct RadarHeader: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            LinearGradient(colors: [.radarInk, .radarNight], startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: [Color.radarInk, Color.radarNight], startPoint: .topLeading, endPoint: .bottomTrailing)
             GeometryReader { proxy in
                 ZStack {
                     ForEach([0.34, 0.54, 0.78], id: \.self) { scale in
                         Circle().stroke(Color.white.opacity(0.08), lineWidth: 1).frame(width: proxy.size.width * scale)
                     }
-                    Rectangle().fill(LinearGradient(colors: [.radarMint.opacity(0.35), .clear], startPoint: .leading, endPoint: .trailing)).frame(width: proxy.size.width * 0.42, height: 1).rotationEffect(.degrees(-24))
+                    Rectangle().fill(LinearGradient(colors: [Color.radarMint.opacity(0.35), Color.clear], startPoint: .leading, endPoint: .trailing)).frame(width: proxy.size.width * 0.42, height: 1).rotationEffect(.degrees(-24))
                     RadarPulse().frame(width: 28, height: 28).offset(x: 48, y: -24)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).offset(x: proxy.size.width * 0.28)
             }
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("HET'S SEARCH").font(.caption2.weight(.black)).tracking(1.8).foregroundStyle(.radarMint)
-                        Text("Job radar").font(.system(size: 34, weight: .black, design: .rounded)).foregroundStyle(.white)
+                        Text("HET'S SEARCH").font(.caption2.weight(.black)).tracking(1.8).foregroundStyle(Color.radarMint)
+                        Text("Job radar").font(.system(size: 34, weight: .black, design: .rounded)).foregroundStyle(Color.white)
                     }
                     Spacer()
-                    Label(syncLabel, systemImage: "circle.fill").font(.caption2.bold()).foregroundStyle(.white.opacity(0.75))
+                    Label(syncLabel, systemImage: "circle.fill").font(.caption2.bold()).foregroundStyle(Color.white.opacity(0.75))
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("\(actionCount)").font(.system(size: 58, weight: .black, design: .rounded)).foregroundStyle(actionCount > 0 ? .radarAmber : .radarMint)
+                    Text("\(actionCount)").font(.system(size: 58, weight: .black, design: .rounded)).foregroundStyle(actionCount > 0 ? Color.radarAmber : Color.radarMint)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(actionCount == 1 ? "item needs" : "items need").font(.headline).foregroundStyle(.white)
-                        Text("your attention").font(.headline).foregroundStyle(.white.opacity(0.62))
+                        Text(actionCount == 1 ? "item needs" : "items need").font(.headline).foregroundStyle(Color.white)
+                        Text("your attention").font(.headline).foregroundStyle(Color.white.opacity(0.62))
                     }
                 }
                 HStack(spacing: 22) {
@@ -142,7 +142,7 @@ private struct RadarHeader: View {
         switch syncState { case .syncing: "SCANNING"; case .synced: "CURRENT"; case .offline: "OFFLINE"; case .failed(_): "CHECK"; case .idle: "READY" }
     }
     private func stat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) { Text(value).font(.headline.bold()).foregroundStyle(.white); Text(label.uppercased()).font(.system(size: 9, weight: .black)).tracking(1).foregroundStyle(.white.opacity(0.45)) }
+        VStack(alignment: .leading, spacing: 2) { Text(value).font(.headline.bold()).foregroundStyle(Color.white); Text(label.uppercased()).font(.system(size: 9, weight: .black)).tracking(1).foregroundStyle(Color.white.opacity(0.45)) }
     }
 }
 
@@ -158,7 +158,7 @@ private struct ApplicationCard: View {
                 }.frame(width: 48, height: 48)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(application.company).font(.headline.weight(.black)).lineLimit(1)
-                    Text(application.role).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    Text(application.role).font(.subheadline).foregroundStyle(Color.secondary).lineLimit(2)
                 }
                 Spacer(minLength: 8)
                 Text(application.status.compactTitle.uppercased())
@@ -169,7 +169,7 @@ private struct ApplicationCard: View {
             }
             if !application.nextAction.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("NEXT MOVE").font(.system(size: 9, weight: .black)).tracking(1.1).foregroundStyle(.secondary)
+                    Text("NEXT MOVE").font(.system(size: 9, weight: .black)).tracking(1.1).foregroundStyle(Color.secondary)
                     Text(application.nextAction).font(.subheadline.weight(.semibold)).lineLimit(3)
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -179,7 +179,7 @@ private struct ApplicationCard: View {
                 Label(application.stage, systemImage: "point.3.connected.trianglepath.dotted").lineLimit(1)
                 Spacer()
                 if let due = application.followUpDate { Label(due.formatted(date: .abbreviated, time: .omitted), systemImage: "bell") }
-            }.font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+            }.font(.caption2.weight(.bold)).foregroundStyle(Color.secondary)
         }
         .padding(15)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 22))
