@@ -1,0 +1,29 @@
+name: iOS Build
+
+on:
+  push:
+    branches: ["agent/ios-job-radar"]
+    paths: ["ios/JobRadar/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/JobRadar/**", ".github/workflows/ios.yml"]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios/JobRadar
+        run: xcodegen generate
+      - name: Build for iOS Simulator
+        working-directory: ios/JobRadar
+        run: |
+          xcodebuild \
+            -project JobRadar.xcodeproj \
+            -scheme JobRadar \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
