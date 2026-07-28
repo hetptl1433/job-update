@@ -2,34 +2,71 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0d1b2a" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#05080e" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Job Radar" />
   <title>Het's Job Radar</title>
-  <meta name="description" content="Het's interview and job status feed." />
-  <link rel="stylesheet" href="styles-radar.css?v=5" />
+  <meta name="description" content="Het's private interview and recruiting status tracker." />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="app-icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="app-icon.svg" />
+  <link rel="stylesheet" href="styles-radar.css?v=6" />
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
-  <script src="data/seed.js?v=5" defer></script>
-  <script src="app-radar.js?v=5" defer></script>
+  <script src="data/seed.js?v=6" defer></script>
+  <script src="app-radar.js?v=6" defer></script>
 </head>
 <body>
-  <main class="shell">
-    <header class="hero">
-      <div class="hero-topline">
+  <main id="top" class="shell">
+    <header class="app-header">
+      <div class="topbar">
         <div class="brand-lockup">
           <div class="radar-mark" aria-hidden="true"><i></i><b></b></div>
-          <div><span class="kicker">HET'S SEARCH</span><h1>Job radar</h1></div>
+          <div>
+            <h1>Job Radar</h1>
+            <p>Interview tracker</p>
+          </div>
         </div>
-        <div id="syncIndicator" class="sync-indicator local"><span class="sync-dot"></span><span id="syncText">Loading</span></div>
+        <div class="header-actions">
+          <button id="refreshButton" class="refresh-button" type="button" aria-label="Refresh tracker">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M18.2 15.2a7 7 0 1 1 .5-7.8L20 11"/></svg>
+          </button>
+          <div id="syncIndicator" class="sync-indicator local"><span class="sync-dot"></span><span id="syncText">Loading</span></div>
+        </div>
       </div>
-      <div class="attention-block">
-        <div><strong id="attentionCount">0</strong><p>need your attention</p></div>
-        <span id="attentionNote">Nothing urgent right now</span>
+
+      <div class="welcome-row">
+        <div>
+          <span class="eyebrow">YOUR SEARCH</span>
+          <h2 id="greetingText">Good evening, Het</h2>
+          <p>Here are your latest verified recruiting updates.</p>
+        </div>
+        <div class="updated-card">
+          <span>LAST SYNC</span>
+          <strong id="lastSync">Checking…</strong>
+        </div>
       </div>
-      <div id="metricGrid" class="metric-strip" aria-label="Pipeline summary"></div>
+
+      <section class="attention-card" aria-label="Items needing attention">
+        <div class="attention-copy">
+          <span>NEEDS ATTENTION</span>
+          <p id="attentionNote">Nothing urgent right now</p>
+        </div>
+        <strong id="attentionCount">0</strong>
+      </section>
+
+      <div id="metricGrid" class="metric-grid" aria-label="Pipeline summary"></div>
     </header>
 
     <section class="controls" aria-label="Filter applications">
-      <div class="search-box"><span data-icon="search"></span><input id="searchInput" aria-label="Search companies" placeholder="Search company or role" /></div>
+      <div class="search-box">
+        <span data-icon="search"></span>
+        <input id="searchInput" type="search" inputmode="search" autocomplete="off" aria-label="Search companies" placeholder="Search company or role" />
+      </div>
       <div class="tabs" id="filterTabs"></div>
     </section>
 
@@ -39,28 +76,36 @@
         <small id="resultCount">0 companies</small>
       </div>
       <div id="trackerBody" class="status-feed"></div>
-      <div id="emptyState" class="empty-state" hidden><div class="empty-radar"></div><h3>No matches</h3><p>Try another status or search.</p></div>
+      <div id="emptyState" class="empty-state" hidden>
+        <div class="empty-radar"></div>
+        <h3>No matches</h3>
+        <p>Try another status or search.</p>
+      </div>
     </section>
 
-    <footer class="page-footer"><span id="storageCopy">Loading tracker data…</span><span id="lastSync"></span></footer>
+    <footer class="page-footer"><span id="storageCopy">Loading tracker data…</span></footer>
   </main>
 
   <nav class="bottom-dock" aria-label="Tracker actions">
-    <button id="addButton" class="dock-primary"><span data-icon="plus"></span><span>Add company</span></button>
-    <button id="toolsButton" class="dock-more" aria-label="Open tracker tools" aria-expanded="false"><span data-icon="more"></span></button>
+    <a class="dock-home" href="#top" aria-label="Dashboard">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11.5 12 5l8 6.5V20H4z"/><path d="M9 20v-6h6v6"/></svg>
+      <span>Radar</span>
+    </a>
+    <button id="addButton" class="dock-primary" type="button" aria-label="Add company"><span data-icon="plus"></span><span>Add</span></button>
+    <button id="toolsButton" class="dock-more" type="button" aria-label="Open tracker tools" aria-expanded="false"><span data-icon="more"></span><span>Tools</span></button>
   </nav>
 
   <div id="toolsBackdrop" class="tools-backdrop" hidden>
     <section class="tools-sheet" aria-label="Tracker tools">
       <div class="sheet-grabber"></div>
-      <div class="sheet-heading"><div><span>TRACKER TOOLS</span><h2>Manage your data</h2></div><button id="closeTools" class="icon-button" aria-label="Close"><span data-icon="close"></span></button></div>
+      <div class="sheet-heading"><div><span>TRACKER TOOLS</span><h2>Manage your data</h2></div><button id="closeTools" class="icon-button" type="button" aria-label="Close"><span data-icon="close"></span></button></div>
       <div class="tool-grid">
-        <button id="importButton" class="tool-action"><span data-icon="upload"></span><b>Import</b><small>Excel or JSON</small></button>
+        <button id="importButton" class="tool-action" type="button"><span data-icon="upload"></span><b>Import</b><small>Excel or JSON</small></button>
         <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.json" hidden />
-        <button id="exportButton" class="tool-action"><span data-icon="download"></span><b>Export</b><small>Download Excel</small></button>
+        <button id="exportButton" class="tool-action" type="button"><span data-icon="download"></span><b>Export</b><small>Download Excel</small></button>
       </div>
-      <label class="password-field"><span>Admin password</span><input id="adminPassword" type="password" placeholder="Enter password" /></label>
-      <button id="saveButton" class="save-button"><span data-icon="save"></span> Save online</button>
+      <label class="password-field"><span>Admin password</span><input id="adminPassword" type="password" placeholder="Enter password" autocomplete="current-password" /></label>
+      <button id="saveButton" class="save-button" type="button"><span data-icon="save"></span> Save online</button>
     </section>
   </div>
 
@@ -91,6 +136,18 @@
       </div>
     </form>
   </div>
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const hour = new Date().getHours();
+      const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+      const greetingText = document.getElementById("greetingText");
+      if (greetingText) greetingText.textContent = `${greeting}, Het`;
+      const refresh = document.getElementById("refreshButton");
+      if (refresh) refresh.addEventListener("click", () => typeof loadData === "function" && loadData(true));
+      if (window.navigator.standalone || window.matchMedia("(display-mode: standalone)").matches) document.documentElement.classList.add("standalone");
+    });
+  </script>
 </body>
 </html>
