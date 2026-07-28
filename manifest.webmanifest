@@ -1,0 +1,19 @@
+{
+  "name": "Het's Job Radar",
+  "short_name": "Job Radar",
+  "description": "Private interview and recruiting status tracker.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#05080e",
+  "theme_color": "#05080e",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
