@@ -1,0 +1,13 @@
+node_modules/
+
+.env
+.env.*
+!.env.example
+
+.vercel
+
+.DS_Store
+
+# Private tracker exports — records must never enter this public repository
+*.xlsx
+*.xls
