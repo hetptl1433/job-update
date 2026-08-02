@@ -78,22 +78,55 @@ account's mail and nothing else.
 
 Paste [sync-tracker.gs](sync-tracker.gs) over the default `Code.gs`.
 
-### 4. Add the two secrets
+### 4. Add the secrets
 
 Project Settings (gear icon) → Script Properties → Add script property:
 
-| Property | Value |
-|---|---|
-| `GITHUB_TOKEN` | the token from step 2 |
-| `ADMIN_PASSWORD` | the same `ADMIN_PASSWORD` set in your Vercel env vars |
+| Property | Required | Value |
+|---|---|---|
+| `GITHUB_TOKEN` | yes | the token from step 2 |
+| `ADMIN_PASSWORD` | yes | the same `ADMIN_PASSWORD` set in your Vercel env vars |
+| `PRODUCTION_URL` | see below | base URL of the deployment, no trailing slash |
+| `VERCEL_BYPASS` | see below | Protection Bypass for Automation secret |
 
 These live in Google's property store, not in this repository. Never commit them.
 
+### 4a. Point at the right deployment
+
+**`https://job-update.vercel.app` is not this app.** That hostname was claimed by
+an unrelated create-react-app project and returns "React App" for every path,
+including `/api/tracker`. Deployments of this repo go to the Vercel project
+`hetptl1433s-projects/job-update`, currently served at:
+
+```text
+https://job-update-hetptl1433s-projects.vercel.app
+```
+
+Confirm the current alias under **Vercel → job-update → Domains**, and set
+`PRODUCTION_URL` to it. The script fails with a specific error rather than a
+JSON parse error if it gets HTML back, but it is worth getting right up front.
+
+### 4b. Let the script past Deployment Protection
+
+The project has **Vercel Authentication** enabled, which sits in front of the
+entire deployment and is separate from `ADMIN_PASSWORD`. Unauthenticated
+requests get a `302` to `vercel.com/sso-api`, so the script never reaches the
+API at all. Pick one:
+
+- **Recommended.** Vercel → Settings → Deployment Protection → **Protection
+  Bypass for Automation** → generate a secret, and store it as `VERCEL_BYPASS`.
+  Humans still hit SSO; the script passes it as `x-vercel-protection-bypass`.
+- Or disable protection for Production. The tracker API still requires
+  `ADMIN_PASSWORD`, but the rest of the deployment becomes publicly reachable.
+
 ### 5. Dry run
 
-Run the `dryRun` function from the editor toolbar. Google will prompt for
-authorization the first time — it needs Gmail read, external fetch, and mail
-send.
+Run `checkConnection` first. Google will prompt for authorization the first time
+— it needs Gmail read, external fetch, and mail send. It confirms the script can
+reach both the tracker API and GitHub, and names the specific failure if not.
+Get this green before going further; steps 1–4 are all it exercises.
+
+Then run `dryRun` from the editor toolbar.
 
 `dryRun` reads the digest and your live cloud data, prints what it *would*
 change, and writes nothing. Check the execution log and confirm the companies
@@ -145,6 +178,8 @@ curl -s -H "x-admin-password: $ADMIN_PASSWORD" \
 
 | Symptom | Cause |
 |---|---|
+| `Deployment Protection is blocking` | Set `VERCEL_BYPASS`, or disable protection — see step 4b |
+| `returned HTML instead of JSON` | `PRODUCTION_URL` points at the wrong project — see step 4a |
 | `No digest found` | ChatGPT task is paused, or its prompt lost the sentinel |
 | `ADMIN_PASSWORD rejected` | Script property does not match the Vercel env var |
 | `Refusing to sync: cloud storage is unavailable` | Blob store disconnected in Vercel |

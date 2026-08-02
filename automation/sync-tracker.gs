@@ -22,7 +22,11 @@ const CONFIG = {
   searchWindow: 'newer_than:3d',
   repo: 'hetptl1433/job-update',
   branch: 'main',
-  production: 'https://job-update.vercel.app',
+  // Overridden by the PRODUCTION_URL script property. Note that
+  // job-update.vercel.app belongs to an unrelated project — the deployment for
+  // this repo is job-update-hetptl1433s-projects.vercel.app. Confirm the
+  // current alias in the Vercel dashboard before trusting either.
+  production: 'https://job-update-hetptl1433s-projects.vercel.app',
   browserSeed: 'data/seed.js',
   apiSeed: 'api/tracker.js',
   // A digest rewriting more than this many records is treated as a bad parse
@@ -313,20 +317,62 @@ function buildCommitMessage_(result) {
 
 /* ------------------------------------------------------ Tracker API --- */
 
+/** Base URL, overridable without editing this file. */
+function productionUrl_() {
+  const override = PropertiesService.getScriptProperties().getProperty('PRODUCTION_URL');
+  return String(override || CONFIG.production).replace(/\/+$/, '');
+}
+
 function trackerFetch_(password, options) {
-  const response = UrlFetchApp.fetch(CONFIG.production + '/api/tracker', Object.assign({
+  const props = PropertiesService.getScriptProperties();
+  const headers = { 'x-admin-password': password };
+
+  // Vercel Deployment Protection sits in front of the whole deployment and is
+  // separate from ADMIN_PASSWORD. Without a bypass token it answers every
+  // request with an SSO redirect, so the API is never reached at all.
+  const bypass = props.getProperty('VERCEL_BYPASS');
+  if (bypass) headers['x-vercel-protection-bypass'] = bypass;
+
+  const url = productionUrl_() + '/api/tracker';
+  const response = UrlFetchApp.fetch(url, Object.assign({
     method: 'get',
     muteHttpExceptions: true,
-    headers: { 'x-admin-password': password },
+    followRedirects: false,
+    headers: headers,
   }, options || {}));
 
   const code = response.getResponseCode();
   const text = response.getContentText();
-  if (code === 401) throw new Error('ADMIN_PASSWORD rejected by /api/tracker');
-  if (code < 200 || code >= 300) {
-    throw new Error('/api/tracker returned ' + code + ': ' + text.slice(0, 300));
+
+  if (code === 302 || code === 307) {
+    const target = String(response.getHeaders().Location || '');
+    if (target.indexOf('sso-api') !== -1 || target.indexOf('vercel.com/sso') !== -1) {
+      throw new Error(
+        'Vercel Deployment Protection is blocking ' + url + '. Either disable ' +
+        'protection for production, or create a Protection Bypass for Automation ' +
+        'secret in Vercel and store it as the VERCEL_BYPASS script property.');
+    }
+    throw new Error('Unexpected redirect from ' + url + ' to ' + target);
   }
-  return JSON.parse(text);
+
+  if (code === 401) throw new Error('ADMIN_PASSWORD rejected by ' + url);
+  if (code < 200 || code >= 300) {
+    throw new Error(url + ' returned ' + code + ': ' + text.slice(0, 300));
+  }
+
+  // A wrong PRODUCTION_URL usually still returns 200 — with someone else's
+  // index.html. Fail loudly rather than letting JSON.parse report a syntax error.
+  if (text.slice(0, 200).trim().toLowerCase().indexOf('<!doctype') === 0) {
+    throw new Error(
+      url + ' returned HTML instead of JSON. PRODUCTION_URL is probably pointing ' +
+      'at the wrong deployment — job-update.vercel.app belongs to a different project.');
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error('Could not parse the response from ' + url + ': ' + text.slice(0, 200));
+  }
 }
 
 function fetchCloud_(password) {
@@ -475,6 +521,25 @@ function installTrigger() {
 
   ScriptApp.newTrigger('syncTracker').timeBased().atHour(7).everyDays(1).create();
   log_('Daily trigger installed for ~7am.');
+}
+
+/**
+ * Run this FIRST. Confirms the script can actually reach the tracker API before
+ * you worry about digests, and names the specific failure if it cannot.
+ */
+function checkConnection() {
+  const props = PropertiesService.getScriptProperties();
+  log_('Production URL: ' + productionUrl_());
+  log_('VERCEL_BYPASS set: ' + (props.getProperty('VERCEL_BYPASS') ? 'yes' : 'no'));
+
+  const password = requireProperty_(props, 'ADMIN_PASSWORD');
+  const live = fetchCloud_(password);
+  log_('OK — API reachable, ' + live.data.length + ' record(s), cloud=' + live.cloud);
+  if (!live.cloud) log_('WARNING: cloud storage is not connected, so writes would not persist.');
+
+  const token = requireProperty_(props, 'GITHUB_TOKEN');
+  const ref = githubFetch_(token, '/repos/' + CONFIG.repo + '/git/ref/heads/' + CONFIG.branch);
+  log_('OK — GitHub reachable, ' + CONFIG.branch + ' is at ' + ref.object.sha.slice(0, 7));
 }
 
 /** Run by hand to check parsing and matching without writing anything. */
