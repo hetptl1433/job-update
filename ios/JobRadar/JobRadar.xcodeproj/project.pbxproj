@@ -1,0 +1,377 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		006EAD985388A524E6C74870 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60872F203A64B2B72C40E9E8 /* DesignSystem.swift */; };
+		08043776541B6E9EF2712764 /* RadarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6C0FD3B02457D4C8EAE1FFA /* RadarView.swift */; };
+		0A54B14B087712E487BC5324 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A8C891ED8B931275D311E9 /* AppDelegate.swift */; };
+		1A8CDA6C1DD88A9A988EFEA4 /* JobApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 081316B189E1395A742756AA /* JobApplication.swift */; };
+		540B94E4B86AB6DDDA26B1C6 /* AppServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6AA069C5B421245D009360B /* AppServices.swift */; };
+		A6A027D89FD93E6AAD9540D1 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E522CD746A20A5BC8A8578A1 /* RootView.swift */; };
+		B5047EAE95CB36FD86E0EEE6 /* ConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFE6D4170A618F1D450969AA /* ConnectionsView.swift */; };
+		C95A5B0980A58FDE823F5E16 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DC1ABF0210E1CD788AD439 /* SettingsView.swift */; };
+		CF134F2E07B87AA233FAFE67 /* JobRadarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB723C09D31590A2318455B /* JobRadarApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		081316B189E1395A742756AA /* JobApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobApplication.swift; sourceTree = "<group>"; };
+		12FE95822077E986CB0DB230 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		13DC1ABF0210E1CD788AD439 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		60872F203A64B2B72C40E9E8 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		93A8C891ED8B931275D311E9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		ACDE3B61367785DDDEF1C81A /* JobRadar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JobRadar.entitlements; sourceTree = "<group>"; };
+		B6AA069C5B421245D009360B /* AppServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppServices.swift; sourceTree = "<group>"; };
+		B6C0FD3B02457D4C8EAE1FFA /* RadarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RadarView.swift; sourceTree = "<group>"; };
+		BFE6D4170A618F1D450969AA /* ConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsView.swift; sourceTree = "<group>"; };
+		CCB723C09D31590A2318455B /* JobRadarApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobRadarApp.swift; sourceTree = "<group>"; };
+		E522CD746A20A5BC8A8578A1 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		E5C1C4C959CBEDB3454D8549 /* JobRadar.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = JobRadar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		22641417FC3A01419BED4D30 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				B6AA069C5B421245D009360B /* AppServices.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		2AF73A4890F4DE996AB95575 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E5C1C4C959CBEDB3454D8549 /* JobRadar.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		4ED1BAFEEA762C60BD332DED /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				081316B189E1395A742756AA /* JobApplication.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		594384611F265A89EC23FEA4 /* JobRadar */ = {
+			isa = PBXGroup;
+			children = (
+				B27559F9858BE3779E1E6E76 /* App */,
+				B705AFF0B0E8026D03B94458 /* Design */,
+				4ED1BAFEEA762C60BD332DED /* Models */,
+				61395E1A586BC4B5F42813CF /* Resources */,
+				22641417FC3A01419BED4D30 /* Services */,
+				FD8F220586975D57388DF171 /* Views */,
+			);
+			path = JobRadar;
+			sourceTree = "<group>";
+		};
+		61395E1A586BC4B5F42813CF /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				12FE95822077E986CB0DB230 /* Info.plist */,
+				ACDE3B61367785DDDEF1C81A /* JobRadar.entitlements */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		ABB9D602334A388542906BDC = {
+			isa = PBXGroup;
+			children = (
+				594384611F265A89EC23FEA4 /* JobRadar */,
+				2AF73A4890F4DE996AB95575 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B27559F9858BE3779E1E6E76 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				93A8C891ED8B931275D311E9 /* AppDelegate.swift */,
+				CCB723C09D31590A2318455B /* JobRadarApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		B705AFF0B0E8026D03B94458 /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				60872F203A64B2B72C40E9E8 /* DesignSystem.swift */,
+			);
+			path = Design;
+			sourceTree = "<group>";
+		};
+		FD8F220586975D57388DF171 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				BFE6D4170A618F1D450969AA /* ConnectionsView.swift */,
+				B6C0FD3B02457D4C8EAE1FFA /* RadarView.swift */,
+				E522CD746A20A5BC8A8578A1 /* RootView.swift */,
+				13DC1ABF0210E1CD788AD439 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		9005D2F93B3B99CC91A0E2B1 /* JobRadar */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C9ED05CE953D50013B817B0E /* Build configuration list for PBXNativeTarget "JobRadar" */;
+			buildPhases = (
+				F24CBB113CDB0B3FDF32DC05 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = JobRadar;
+			packageProductDependencies = (
+			);
+			productName = JobRadar;
+			productReference = E5C1C4C959CBEDB3454D8549 /* JobRadar.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7FA7DD4823E985C9F95A1F0C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					9005D2F93B3B99CC91A0E2B1 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 663D64FF12B8E61F59A25556 /* Build configuration list for PBXProject "JobRadar" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = ABB9D602334A388542906BDC;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2AF73A4890F4DE996AB95575 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9005D2F93B3B99CC91A0E2B1 /* JobRadar */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F24CBB113CDB0B3FDF32DC05 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A54B14B087712E487BC5324 /* AppDelegate.swift in Sources */,
+				540B94E4B86AB6DDDA26B1C6 /* AppServices.swift in Sources */,
+				B5047EAE95CB36FD86E0EEE6 /* ConnectionsView.swift in Sources */,
+				006EAD985388A524E6C74870 /* DesignSystem.swift in Sources */,
+				1A8CDA6C1DD88A9A988EFEA4 /* JobApplication.swift in Sources */,
+				CF134F2E07B87AA233FAFE67 /* JobRadarApp.swift in Sources */,
+				08043776541B6E9EF2712764 /* RadarView.swift in Sources */,
+				A6A027D89FD93E6AAD9540D1 /* RootView.swift in Sources */,
+				C95A5B0980A58FDE823F5E16 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		059A0EE5BFF6B6A7E98EEE71 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = JobRadar/Resources/JobRadar.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = JobRadar/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hetpatel.jobradar;
+				PRODUCT_NAME = "Job Radar";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		1939C4E153F53E56BFAB855C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+		48C4E51C53D8D2E7C673F9D6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = JobRadar/Resources/JobRadar.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = JobRadar/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hetpatel.jobradar;
+				PRODUCT_NAME = "Job Radar";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		C283AC1F8C182D8C44EBB765 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		663D64FF12B8E61F59A25556 /* Build configuration list for PBXProject "JobRadar" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C283AC1F8C182D8C44EBB765 /* Debug */,
+				1939C4E153F53E56BFAB855C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C9ED05CE953D50013B817B0E /* Build configuration list for PBXNativeTarget "JobRadar" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				48C4E51C53D8D2E7C673F9D6 /* Debug */,
+				059A0EE5BFF6B6A7E98EEE71 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 7FA7DD4823E985C9F95A1F0C /* Project object */;
+}
