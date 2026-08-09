@@ -1,20 +1,29 @@
-# Job Radar for iPhone
+# Orbit for iPhone
 
-Native SwiftUI app for Het's interview pipeline. The project lives on the `agent/ios-job-radar` branch so the existing Vercel website remains untouched.
+Orbit is a personal AI command center — email, jobs, health, tasks and an AI
+assistant organized around what needs your attention. Native SwiftUI.
 
-## Included
+The project lives on the `agent/ios-job-radar` branch so the existing Vercel
+website remains untouched. The internal Xcode target and bundle identifier are
+kept as `JobRadar` / `com.hetpatel.jobradar` for signing and backend stability;
+the user-facing name is **Orbit**.
 
-- SwiftUI status radar designed for iPhone, not a web wrapper
-- SwiftData offline database
-- Refresh and save against the existing `/api/tracker` backend
-- Admin password stored in iOS Keychain
-- Per-company local follow-up notifications
-- 6:00 AM local digest notification
-- APNs device-token registration hook
-- Background refresh hook using `BGAppRefreshTask`
-- Sign in with Apple
-- OAuth connection UI for Gmail, LinkedIn, and Indeed
-- GitHub Actions simulator build
+## Architecture
+
+```
+Views          → SwiftUI screens (Home, Inbox, Jobs, Health, Automations, Assistant, Settings)
+State          → AppState (single source of session/routing truth)
+Authentication → AuthenticationManager, GoogleAuthService (GoogleSignIn), UserSession, Keychain
+Repositories   → JobRepository, GmailRepository, HealthRepository
+Services       → AssistantService (AI via backend), AutomationService, NotificationManager
+Networking     → APIClient (talks only to our backend — never OpenAI directly)
+Models         → JobApplication (SwiftData) + domain models
+Design         → AppTheme (centralized black/white/gray tokens, light + dark)
+Config         → AppConfig (app name, apiBaseURL, GIDClientID)
+```
+
+The data flow is: **your services → our backend → OpenAI → one clean dashboard.**
+The iOS app holds no OpenAI key.
 
 ## Generate and open the Xcode project
 
@@ -25,49 +34,54 @@ xcodegen generate
 open JobRadar.xcodeproj
 ```
 
-In Xcode:
+`project.yml` is the source of truth. Re-run `xcodegen generate` after adding
+files, packages, or Info.plist keys.
 
-1. Select the `JobRadar` target and choose your Apple Developer Team.
-2. Change `com.hetpatel.jobradar` if that bundle identifier is unavailable.
-3. Confirm **Push Notifications**, **Background Modes** (`Background fetch`, `Remote notifications`), and **Sign in with Apple** capabilities.
-4. Update `APIBaseURL` in `JobRadar/Resources/Info.plist` to the production Vercel URL.
-5. Run on a real iPhone to test remote notification registration.
+## Required manual configuration
 
-## Integration reality
+### 1. Google Cloud (Sign in with Google + Gmail/Calendar)
 
-### Gmail
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create a
+   project and configure the OAuth consent screen (External).
+2. Create an **iOS OAuth client ID** for bundle id `com.hetpatel.jobradar`.
+3. Add the client ID to `project.yml` (`info.properties`) or
+   `JobRadar/Resources/Info.plist` as `GIDClientID`, then `xcodegen generate`.
+4. Add a URL scheme equal to your **reversed client ID**
+   (`com.googleusercontent.apps.XXXX`) under `CFBundleURLTypes`.
+5. Add the read-only scopes to the consent screen:
+   `https://www.googleapis.com/auth/gmail.readonly`,
+   `https://www.googleapis.com/auth/calendar.readonly`.
 
-This is the primary automation source. The backend uses Google OAuth with offline access, retains refresh tokens securely, scans only recruiting messages, updates `/api/tracker`, and can send APNs when a verified status changes.
+Until `GIDClientID` is set, sign-in returns a clear "not configured" message
+(the app still builds and runs). If the GoogleSignIn package is unavailable, the
+auth layer falls back to a simulated provider so the full flow stays testable.
 
-### LinkedIn
+### 2. Backend (AI + Gmail classification)
 
-OpenID Connect can sign the user in and return basic profile/email. Reading LinkedIn inbox messages or application history requires separate approved permissions that are not generally available through basic sign-in. Do not scrape LinkedIn.
+The app calls our backend at `APIBaseURL` (default
+`https://job-update.vercel.app`). Implement these endpoints server-side, holding
+the OpenAI key on the server and using the OpenAI Responses API:
 
-### Indeed
+- `POST /api/assistant/ask` — `{ prompt, tools[] }` → `{ text, actions[] }`
+- `POST /api/assistant/summarize` / `classify` — `{ text }` → `{ text }`
+- `POST /api/assistant/daily-brief` → `{ text }`
+- `GET  /api/mobile/gmail/important` and `search?q=` → `{ messages[] }`
+- (existing) `GET/PUT /api/tracker`, `POST /api/mobile/push/register`
 
-Indeed OAuth requires an approved partner application. Basic login is possible after credentials are issued, but job-seeker application-history access is not a standard public feed. Do not scrape Indeed.
+## Capabilities
 
-### Exact 6:00 AM automation
+Confirm in Xcode: Background Modes (Background fetch, Remote notifications) and
+Push Notifications. Sign in with Apple was removed — Google is the identity
+provider now.
 
-The local digest is scheduled for 6:00 AM. iOS background refresh is system-controlled and is not guaranteed at an exact minute. Exact status-change alerts must come from the server through APNs after the Gmail automation runs.
+## Data honesty
 
-## Backend endpoints
+Live screens show real data or explicit empty/disconnected states — never fake
+data. Mock data lives in `Mocks/` and is used only in SwiftUI previews.
 
-- `GET /api/tracker`
-- `PUT /api/tracker`
-- `POST /api/mobile/push/register`
-- `POST /api/mobile/push/send`
-- `GET /api/mobile/oauth/gmail/start`
-- `GET /api/mobile/oauth/linkedin/start`
-- `GET /api/mobile/oauth/indeed/start`
+## Vercel environment variables (server-side only)
 
-## Vercel environment variables
-
-- `OAUTH_STATE_SECRET`
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-- `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`
-- `INDEED_CLIENT_ID`, `INDEED_CLIENT_SECRET`
-- `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, `APNS_BUNDLE_ID`
-- `APNS_ENVIRONMENT` (`development` or `production`)
-
-OAuth refresh/access tokens and APNs device tokens are written to private Vercel Blob objects. Never commit provider secrets or Apple `.p8` keys.
+`OPENAI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OAUTH_STATE_SECRET`,
+`APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, `APNS_BUNDLE_ID`,
+`APNS_ENVIRONMENT`. Never commit provider secrets or Apple `.p8` keys, and never
+ship `OPENAI_API_KEY` in the iOS app.
