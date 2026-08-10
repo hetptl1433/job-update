@@ -4,12 +4,13 @@ import SwiftUI
 /// provider drops in later. Until then this shows an honest connect state.
 struct HealthView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var health: HealthRepository
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                    switch app.health.state {
+                    switch health.state {
                     case let .loaded(summary):
                         metricsGrid(summary)
                     case .loading:
@@ -23,7 +24,7 @@ struct HealthView: View {
                             title: "Connect Apple Health",
                             message: "See your sleep, steps, workouts and heart data alongside everything else. Health permissions are only requested when you connect.",
                             actionTitle: "Connect Apple Health"
-                        ) { app.connectHealth() }
+                        ) { Task { await app.connectHealth() } }
                         .cardSurface()
                     }
                 }
@@ -31,7 +32,9 @@ struct HealthView: View {
             }
             .background(AppTheme.background)
             .navigationTitle("Health")
-            .task { await app.health.refresh() }
+            .task {
+                if app.connections.healthConnected { await app.health.refresh() }
+            }
         }
     }
 
@@ -51,5 +54,6 @@ struct HealthView: View {
 }
 
 #Preview {
-    HealthView().environmentObject(PreviewSupport.appState())
+    let app = PreviewSupport.appState()
+    return HealthView().environmentObject(app).environmentObject(app.health)
 }

@@ -34,17 +34,17 @@ struct WelcomeView: View {
                 } label: {
                     HStack(spacing: AppTheme.Spacing.sm) {
                         if isAuthenticating {
-                            ProgressView().tint(AppTheme.onAccent)
+                            ProgressView().tint(AppTheme.onBrand)
                         } else {
                             GoogleGlyph()
-                            Text("Continue with Google")
+                            Text("Connect Gmail")
                         }
                     }
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(isAuthenticating)
 
-                Text("Your data stays connected to your account and you control what the app can access.")
+                Text("Signs in with Google and requests read-only Gmail access. Orbit never sends email.")
                     .font(.footnote)
                     .foregroundStyle(AppTheme.tertiaryText)
                     .multilineTextAlignment(.center)
@@ -62,9 +62,9 @@ struct GoogleGlyph: View {
     var body: some View {
         Text("G")
             .font(.system(size: 15, weight: .bold, design: .rounded))
-            .foregroundStyle(AppTheme.accent)
+            .foregroundStyle(AppTheme.brand)
             .frame(width: 22, height: 22)
-            .background(AppTheme.onAccent, in: Circle())
+            .background(AppTheme.onBrand, in: Circle())
     }
 }
 

@@ -28,9 +28,8 @@ enum AttentionImportance: Int, Codable, Comparable {
     }
 }
 
-/// An actionable item surfaced on the Home screen. Backed eventually by AI
-/// classification over the user's real data; for now populated from mock data
-/// in development builds only.
+/// An actionable item surfaced on the Home screen from the user's local jobs
+/// and classified provider-neutral email data.
 struct AttentionItem: Identifiable, Hashable {
     let id: String
     var category: AttentionCategory
@@ -56,11 +55,15 @@ enum InboxSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// An AI-filtered important message. This is not a raw Gmail mirror — it carries
-/// a short AI summary and an action flag alongside the source metadata.
+/// AI-classified provider-neutral mail. Provider API payloads are normalized
+/// before the Inbox, Home, Tasks, Jobs, or Assistant consumes them.
 struct InboxMessage: Identifiable, Hashable {
     let id: String
-    var sender: String
+    var provider: EmailProviderType
+    var accountID: String
+    var accountEmail: String
+    var senderName: String
+    var senderEmail: String
     var subject: String
     var aiSummary: String
     var receivedAt: Date
@@ -70,17 +73,55 @@ struct InboxMessage: Identifiable, Hashable {
     var isRead: Bool = false
     var threadID: String?
     var labels: [String] = []
+
+    var mailboxEmail: String { accountEmail }
+    var sender: String { senderName.isEmpty ? senderEmail : senderName }
 }
 
 // MARK: - Calendar
 
-struct CalendarEvent: Identifiable, Hashable {
+enum CalendarProviderType: String, Codable, CaseIterable, Identifiable, Sendable {
+    case apple
+    case google
+    case outlook
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .apple: "Apple Calendar"
+        case .google: "Google Calendar"
+        case .outlook: "Outlook Calendar"
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .apple: "apple.logo"
+        case .google: "g.circle"
+        case .outlook: "building.2"
+        }
+    }
+}
+
+struct UnifiedCalendarEvent: Identifiable, Hashable, Sendable {
     let id: String
+    var provider: CalendarProviderType
+    var calendarID: String
     var title: String
     var start: Date
     var end: Date?
     var location: String?
+    var notes: String?
+    var meetingURL: URL?
+    var isAllDay: Bool
+    var relatedJobApplicationID: Int?
     var isImportant: Bool = false
+}
+
+typealias CalendarEvent = UnifiedCalendarEvent
+
+protocol CalendarProviderService {
+    var provider: CalendarProviderType { get }
+    func upcomingEvents(token: String?) async throws -> [UnifiedCalendarEvent]
 }
 
 // MARK: - Health

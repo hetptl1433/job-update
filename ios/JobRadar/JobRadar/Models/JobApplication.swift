@@ -39,7 +39,7 @@ final class JobApplication: Identifiable {
     var interviewDates: [Date] = []
 
     init(
-        id: Int = Int(Date().timeIntervalSince1970),
+        id: Int = JobApplication.makeLocalID(),
         company: String = "",
         role: String = "",
         stage: String = "",
@@ -104,6 +104,12 @@ final class JobApplication: Identifiable {
     var initials: String {
         company.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
     }
+
+    private static func makeLocalID() -> Int {
+        // Milliseconds keep IDs compatible with the existing numeric backend;
+        // a small suffix prevents collisions when importing several emails.
+        Int(Date().timeIntervalSince1970 * 1_000) + Int.random(in: 0...999)
+    }
 }
 
 // MARK: - Status
@@ -151,6 +157,20 @@ enum JobStatus: String, Codable, CaseIterable, Identifiable {
     var isOffer: Bool { self == .offer }
     var isActive: Bool { !isClosed }
 
+    /// Monotonic pipeline order used to prevent older email from regressing a job.
+    var progressRank: Int {
+        switch self {
+        case .saved: 0
+        case .applied: 1
+        case .recruiterContact: 2
+        case .screening: 3
+        case .interview: 4
+        case .finalInterview: 5
+        case .offer: 6
+        case .rejected, .withdrawn, .closed: 7
+        }
+    }
+
     /// SF Symbol representing the stage. Restrained, monochrome by default.
     var systemImage: String {
         switch self {
@@ -167,15 +187,18 @@ enum JobStatus: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Restrained semantic tint. Most statuses use neutral text; only genuinely
-    /// meaningful states get a semantic color (offer = success, negative = red).
+    /// Semantic tint per stage — restrained but colored enough to read at a glance.
     var tint: Color {
         switch self {
+        case .saved: AppTheme.secondaryText
+        case .applied: AppTheme.info
+        case .recruiterContact: AppTheme.brand
+        case .screening: AppTheme.warning
+        case .interview: AppTheme.brand
+        case .finalInterview: AppTheme.purple
         case .offer: AppTheme.success
         case .rejected, .withdrawn: AppTheme.destructive
         case .closed: AppTheme.tertiaryText
-        case .interview, .finalInterview: AppTheme.primaryText
-        default: AppTheme.secondaryText
         }
     }
 }

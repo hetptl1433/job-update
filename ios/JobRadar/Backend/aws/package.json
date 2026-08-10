@@ -1,0 +1,22 @@
+{
+  "name": "orbit-finance-aws",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AWS Lambda backend for Orbit's Plaid finance integration.",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/handler.js && node --check src/plaid-service.js && node --check src/store.js && node --check src/normalization.js && node --check src/income.js && node --check src/income-service.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1106.0",
+    "@aws-sdk/client-kms": "^3.1106.0",
+    "@aws-sdk/client-secrets-manager": "^3.1106.0",
+    "@aws-sdk/lib-dynamodb": "^3.1106.0",
+    "jose": "^6.2.8",
+    "plaid": "^45.0.0"
+  }
+}

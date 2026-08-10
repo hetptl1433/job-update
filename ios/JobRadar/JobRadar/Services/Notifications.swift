@@ -37,6 +37,44 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         try? await center.add(request)
     }
 
+    func scheduleReminderNotification(id: UUID, title: String, body: String, date: Date) async {
+        let identifier = "orbit-reminder-\(id.uuidString)"
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        guard date > .now else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo = ["reminderID": id.uuidString]
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: max(1, date.timeIntervalSinceNow), repeats: false
+        )
+        try? await center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
+    }
+
+    func scheduleTaskNotification(id: UUID, title: String, body: String, date: Date) async {
+        let identifier = "orbit-task-\(id.uuidString)"
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        guard date > .now else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo = ["taskID": id.uuidString]
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: max(1, date.timeIntervalSinceNow), repeats: false
+        )
+        try? await center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: trigger))
+    }
+
+    func cancelReminder(id: UUID) {
+        center.removePendingNotificationRequests(withIdentifiers: ["orbit-reminder-\(id.uuidString)"])
+    }
+
+    func cancelTaskAlert(id: UUID) {
+        center.removePendingNotificationRequests(withIdentifiers: ["orbit-task-\(id.uuidString)"])
+    }
+
     func scheduleDailyDigest(hour: Int = 6) async {
         center.removePendingNotificationRequests(withIdentifiers: ["daily-brief"])
         let content = UNMutableNotificationContent()

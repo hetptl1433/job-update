@@ -21,6 +21,7 @@ final class JobRepository: ObservableObject {
 
     @discardableResult
     func refresh() async -> Bool {
+        guard api.isConfigured else { return true }
         syncState = .syncing
         do {
             let remote = try await api.fetchApplications()
@@ -36,6 +37,7 @@ final class JobRepository: ObservableObject {
     }
 
     func saveAll() async {
+        guard api.isConfigured else { return }
         syncState = .syncing
         do {
             let all = try context.fetch(FetchDescriptor<JobApplication>())
@@ -49,24 +51,51 @@ final class JobRepository: ObservableObject {
 
     func add(_ application: JobApplication) {
         context.insert(application)
-        try? context.save()
+        if saveLocal() {
+            Task { await NotificationManager.shared.scheduleReminder(for: JobApplicationDTO(model: application)) }
+        }
     }
 
     func delete(_ application: JobApplication) {
         context.delete(application)
-        try? context.save()
+        _ = saveLocal()
+    }
+
+    /// Apply an AI-detected update: update the matching company or create a new
+    /// application. Called only after the user confirms (audit trail).
+    func applyDetected(_ update: DetectedJobUpdate) {
+        let all = (try? context.fetch(FetchDescriptor<JobApplication>())) ?? []
+        if let existing = bestMatch(for: update, in: all) {
+            // Multiple emails can describe the same application. Never let an
+            // older confirmation regress an interview back to "Applied".
+            if update.status.progressRank >= existing.status.progressRank || update.status.isClosed {
+                existing.status = update.status
+            }
+            if !update.nextAction.isEmpty { existing.nextAction = update.nextAction }
+            if existing.role.isEmpty, !update.role.isEmpty { existing.role = update.role }
+            if let source = update.sourceMessageID, !existing.relatedEmailThreadIDs.contains(source) {
+                existing.relatedEmailThreadIDs.append(source)
+            }
+            existing.updatedAt = .now
+        } else {
+            let job = JobApplication(company: update.company, role: update.role,
+                                     status: update.status, nextAction: update.nextAction)
+            if let source = update.sourceMessageID { job.relatedEmailThreadIDs = [source] }
+            context.insert(job)
+        }
+        _ = saveLocal()
     }
 
     func touch(_ application: JobApplication) {
         application.updatedAt = .now
-        try? context.save()
-        Task { await NotificationManager.shared.scheduleReminder(for: JobApplicationDTO(model: application)) }
+        if saveLocal() {
+            Task { await NotificationManager.shared.scheduleReminder(for: JobApplicationDTO(model: application)) }
+        }
     }
 
     private func upsert(_ remote: [JobApplicationDTO]) throws {
         let local = try context.fetch(FetchDescriptor<JobApplication>())
         let byID = Dictionary(local.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let remoteIDs = Set(remote.map(\.id))
 
         for dto in remote {
             let item = byID[dto.id] ?? JobApplication(id: dto.id)
@@ -86,7 +115,40 @@ final class JobRepository: ObservableObject {
             item.updatedAt = .now
         }
 
-        for item in local where !remoteIDs.contains(item.id) { context.delete(item) }
+        // The local store also contains manual and Gmail-detected applications
+        // that may not have reached the legacy backend yet. A refresh is a merge,
+        // never an instruction to delete those local records.
         try context.save()
+    }
+
+    private func bestMatch(for update: DetectedJobUpdate, in applications: [JobApplication]) -> JobApplication? {
+        if let messageID = update.sourceMessageID,
+           let exactSource = applications.first(where: { $0.relatedEmailThreadIDs.contains(messageID) }) {
+            return exactSource
+        }
+
+        let company = normalized(update.company)
+        let role = normalized(update.role)
+        let sameCompany = applications.filter { normalized($0.company) == company }
+        if role.isEmpty { return sameCompany.count == 1 ? sameCompany[0] : nil }
+        return sameCompany.first { normalized($0.role) == role || $0.role.isEmpty }
+    }
+
+    private func normalized(_ value: String) -> String {
+        value.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    @discardableResult
+    private func saveLocal() -> Bool {
+        do {
+            try context.save()
+            return true
+        } catch {
+            syncState = .failed("The local job tracker could not be saved: \(error.localizedDescription)")
+            return false
+        }
     }
 }

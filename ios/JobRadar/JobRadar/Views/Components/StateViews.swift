@@ -77,7 +77,7 @@ struct ImportanceDot: View {
     var importance: AttentionImportance
     var body: some View {
         Circle()
-            .fill(importance == .high ? AppTheme.primaryText : AppTheme.tertiaryText)
+            .fill(importance == .high ? AppTheme.coral : AppTheme.tertiaryText)
             .frame(width: 6, height: 6)
             .opacity(importance == .low ? 0.5 : 1)
     }
@@ -98,8 +98,9 @@ struct Tag: View {
         .foregroundStyle(tint)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .background(tint.opacity(0.08), in: Capsule())
         .overlay(
-            Capsule().strokeBorder(AppTheme.border, lineWidth: 1)
+            Capsule().strokeBorder(tint.opacity(0.28), lineWidth: 1)
         )
     }
 }

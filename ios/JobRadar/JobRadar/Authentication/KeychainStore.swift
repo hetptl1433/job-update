@@ -6,7 +6,13 @@ import Security
 enum KeychainStore {
     @discardableResult
     static func set(_ value: String, for key: String) -> Bool {
-        let data = Data(value.utf8)
+        set(Data(value.utf8), for: key)
+    }
+
+    /// Stores opaque credentials such as an archived Google user. These values
+    /// receive the same device-only Keychain protection as string secrets.
+    @discardableResult
+    static func set(_ data: Data, for key: String) -> Bool {
         SecItemDelete([kSecClass: kSecClassGenericPassword, kSecAttrAccount: key] as CFDictionary)
         let status = SecItemAdd([
             kSecClass: kSecClassGenericPassword,
@@ -18,6 +24,11 @@ enum KeychainStore {
     }
 
     static func get(_ key: String) -> String? {
+        guard let data = data(for: key) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func data(for key: String) -> Data? {
         var result: AnyObject?
         let status = SecItemCopyMatching([
             kSecClass: kSecClassGenericPassword,
@@ -25,8 +36,8 @@ enum KeychainStore {
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne
         ] as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard status == errSecSuccess else { return nil }
+        return result as? Data
     }
 
     static func remove(_ key: String) {

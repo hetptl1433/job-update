@@ -1,0 +1,256 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Orbit Finance API - Plaid, API Gateway, Lambda, DynamoDB, KMS, and Google JWT auth.
+
+Parameters:
+  PlaidSecretArn:
+    Type: String
+    Description: ARN of the existing Secrets Manager secret containing PLAID_CLIENT_ID and PLAID_SECRET.
+  PlaidEnvironment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - sandbox
+      - production
+  GoogleClientID:
+    Type: String
+    Default: 580282197414-mblf538qedv9amtnk0ecovdcko8h8eo9.apps.googleusercontent.com
+    Description: Google iOS OAuth client ID used as the accepted ID-token audience.
+  PlaidRedirectURI:
+    Type: String
+    Default: https://api.ipodeskai.com/plaid/oauth
+    Description: HTTPS Universal Link registered in Plaid, for example https://api.example.com/plaid/oauth.
+  PlaidWebhookURL:
+    Type: String
+    Default: https://api.ipodeskai.com/api/plaid/webhook
+    Description: Public webhook URL, for example https://api.example.com/api/plaid/webhook.
+  HostedLinkCompletionURI:
+    Type: String
+    Default: orbit://finance
+    AllowedPattern: ^orbit://finance$
+    Description: Custom app URL opened after the developer-only Hosted Link browser flow.
+  AppleAppID:
+    Type: String
+    Default: VN6463GX9K.com.hetpatel.jobradar
+    Description: Apple application identifier TEAM_ID.com.hetpatel.jobradar for the AASA response.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    MemorySize: 512
+    Timeout: 29
+    Tracing: PassThrough
+    Environment:
+      Variables:
+        PLAID_SECRET_ARN: !Ref PlaidSecretArn
+        PLAID_ENV: !Ref PlaidEnvironment
+        PLAID_REDIRECT_URI: !Ref PlaidRedirectURI
+        PLAID_WEBHOOK_URL: !Ref PlaidWebhookURL
+        HOSTED_LINK_COMPLETION_URI: !Ref HostedLinkCompletionURI
+        APPLE_APP_ID: !Ref AppleAppID
+        FINANCE_TABLE_NAME: !Ref OrbitFinanceTable
+        TOKEN_KMS_KEY_ID: !GetAtt OrbitFinanceTokenKey.Arn
+
+Resources:
+  OrbitFinanceApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      FailOnWarnings: true
+      Auth:
+        Authorizers:
+          GoogleIDToken:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: https://accounts.google.com
+              audience:
+                - !Ref GoogleClientID
+        DefaultAuthorizer: GoogleIDToken
+
+  OrbitFinanceTokenKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts Plaid Item access tokens stored by Orbit Finance.
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableAccountIAMPolicies
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: "*"
+
+  OrbitFinanceTokenKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/orbit-finance-${PlaidEnvironment}
+      TargetKeyId: !Ref OrbitFinanceTokenKey
+
+  OrbitFinanceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref OrbitFinanceTokenKey
+      TimeToLiveSpecification:
+        AttributeName: deleteAfter
+        Enabled: true
+
+  OrbitFinanceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src/handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrbitFinanceTable
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref PlaidSecretArn
+        - Statement:
+            - Sid: EncryptPlaidItemTokens
+              Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:Decrypt
+              Resource: !GetAtt OrbitFinanceTokenKey.Arn
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        LinkToken:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/link-token
+            Method: POST
+        HostedLink:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/hosted-link
+            Method: POST
+        HostedLinkStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/hosted-link/{id}
+            Method: GET
+        ExchangePublicToken:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/exchange-public-token
+            Method: POST
+        Overview:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/overview
+            Method: GET
+        SyncTransactions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/transactions/sync
+            Method: POST
+        Income:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/finance/income
+            Method: POST
+        ClassifyIncomeTransaction:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/finance/income/transactions/{id}/classification
+            Method: POST
+        DisconnectItem:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/items/{id}
+            Method: DELETE
+        PlaidWebhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /api/plaid/webhook
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        AppleAssociation:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /.well-known/apple-app-site-association
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        PlaidOAuthLanding:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /plaid/oauth
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        PlaidHostedLinkCompletion:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OrbitFinanceApi
+            Path: /plaid/complete
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
+  OrbitFinanceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${OrbitFinanceFunction}
+      RetentionInDays: 14
+
+Outputs:
+  ApiURL:
+    Description: Temporary API Gateway URL. Replace with the custom HTTPS domain before Chase OAuth.
+    Value: !Sub https://${OrbitFinanceApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/
+  FinanceTableName:
+    Value: !Ref OrbitFinanceTable
+  FinanceFunctionName:
+    Value: !Ref OrbitFinanceFunction
+  TokenKeyArn:
+    Value: !GetAtt OrbitFinanceTokenKey.Arn

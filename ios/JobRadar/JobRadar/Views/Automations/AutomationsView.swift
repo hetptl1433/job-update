@@ -3,7 +3,7 @@ import SwiftUI
 /// Automations configuration. These are settings the user controls; the actual
 /// scheduled monitoring runs on the backend with push delivery — not on-device.
 struct AutomationsView: View {
-    @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var automations: AutomationService
 
     var body: some View {
         NavigationStack {
@@ -14,9 +14,9 @@ struct AutomationsView: View {
                         .foregroundStyle(AppTheme.secondaryText)
 
                     VStack(spacing: AppTheme.Spacing.md) {
-                        ForEach(app.automations.automations) { automation in
+                        ForEach(automations.automations) { automation in
                             AutomationRow(automation: automation) { enabled in
-                                app.automations.setEnabled(enabled, for: automation)
+                                automations.setEnabled(enabled, for: automation)
                             }
                         }
                     }
@@ -56,7 +56,7 @@ private struct AutomationRow: View {
             Spacer(minLength: AppTheme.Spacing.sm)
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(AppTheme.accent)
+                .tint(AppTheme.brand)
                 .onChange(of: isOn) { _, newValue in onToggle(newValue) }
         }
         .cardSurface()
@@ -64,5 +64,5 @@ private struct AutomationRow: View {
 }
 
 #Preview {
-    AutomationsView().environmentObject(PreviewSupport.appState())
+    AutomationsView().environmentObject(PreviewSupport.appState().automations)
 }

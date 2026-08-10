@@ -24,25 +24,25 @@ enum MockData {
     ]
 
     static let inbox: [InboxMessage] = [
-        InboxMessage(id: "m1", sender: "ARCO Design/Build", subject: "Interview availability",
+        InboxMessage(id: "m1", provider: .gmail, accountID: "gmail:1", accountEmail: "het@example.com", senderName: "ARCO Design/Build", senderEmail: "recruiting@arco.example", subject: "Interview availability",
                      aiSummary: "They'd like to schedule a 30-minute interview next week.",
                      receivedAt: minutesAgo(12), importance: .high, actionRequired: true, section: .needsAction),
-        InboxMessage(id: "m2", sender: "Career Services", subject: "Additional documentation requested",
+        InboxMessage(id: "m2", provider: .gmail, accountID: "gmail:1", accountEmail: "het@example.com", senderName: "Career Services", senderEmail: "careers@example.edu", subject: "Additional documentation requested",
                      aiSummary: "Upload an updated resume and transcript.",
                      receivedAt: minutesAgo(60), importance: .high, actionRequired: true, section: .needsAction),
-        InboxMessage(id: "m3", sender: "Northwind Talent", subject: "Technical screen confirmed",
+        InboxMessage(id: "m3", provider: .outlook, accountID: "outlook:1", accountEmail: "jobs@example.com", senderName: "Northwind Talent", senderEmail: "talent@northwind.example", subject: "Technical screen confirmed",
                      aiSummary: "Your screen is confirmed for tomorrow at 10:00 AM.",
                      receivedAt: minutesAgo(180), importance: .normal, actionRequired: false, section: .jobs),
-        InboxMessage(id: "m4", sender: "LinkedIn", subject: "5 new jobs for you",
+        InboxMessage(id: "m4", provider: .outlook, accountID: "outlook:1", accountEmail: "jobs@example.com", senderName: "LinkedIn", senderEmail: "jobs@linkedin.example", subject: "5 new jobs for you",
                      aiSummary: "Weekly job recommendations digest.",
                      receivedAt: minutesAgo(400), importance: .low, actionRequired: false, section: .everythingElse)
     ]
 
     static let events: [CalendarEvent] = [
-        CalendarEvent(id: "e1", title: "Interview — Northwind", start: hoursFromNow(20), end: hoursFromNow(20.75),
-                      location: "Google Meet", isImportant: true),
-        CalendarEvent(id: "e2", title: "Class — Systems Design", start: hoursFromNow(25.5), end: hoursFromNow(27)),
-        CalendarEvent(id: "e3", title: "Follow-up deadline — Vertex", start: hoursFromNow(29), isImportant: true)
+        CalendarEvent(id: "e1", provider: .google, calendarID: "primary", title: "Interview — Northwind", start: hoursFromNow(20), end: hoursFromNow(20.75),
+                      location: "Google Meet", notes: nil, meetingURL: nil, isAllDay: false, relatedJobApplicationID: nil, isImportant: true),
+        CalendarEvent(id: "e2", provider: .outlook, calendarID: "work", title: "Class — Systems Design", start: hoursFromNow(25.5), end: hoursFromNow(27), location: nil, notes: nil, meetingURL: nil, isAllDay: false, relatedJobApplicationID: nil),
+        CalendarEvent(id: "e3", provider: .apple, calendarID: "local", title: "Follow-up deadline — Vertex", start: hoursFromNow(29), end: nil, location: nil, notes: nil, meetingURL: nil, isAllDay: false, relatedJobApplicationID: nil, isImportant: true)
     ]
 
     static let health = HealthSummary(metrics: [

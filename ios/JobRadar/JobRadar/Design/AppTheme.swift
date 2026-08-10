@@ -34,8 +34,8 @@ extension Color {
 /// rather than hard-coding colors, so the visual language stays consistent and
 /// light/dark are handled in one place.
 ///
-/// The brand is intentionally black / white / gray — clean, premium, and
-/// engineering-focused. Green is reserved strictly for semantic success.
+/// Neutral surfaces and monochrome emphasis create the app's industrial,
+/// premium visual language. Color is reserved for semantic meaning.
 enum AppTheme {
     // Surfaces & text
     static let background = Color(light: 0xFFFFFF, dark: 0x0A0A0B)
@@ -53,11 +53,22 @@ enum AppTheme {
     /// Foreground color to place on top of `accent`.
     static let onAccent = Color(light: 0xFFFFFF, dark: 0x0A0A0B)
 
+    static let brand = accent
+    static let brandSecondary = Color(light: 0x3A3A3D, dark: 0xC8C8CC)
+    static let coral = Color(light: 0xE6545F, dark: 0xFF7B7F)
+    static let onBrand = onAccent
+    static let brandGradient = LinearGradient(
+        colors: [brand, brand],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
     // Semantic (restrained, used only where meaning requires it)
     static let destructive = Color(light: 0xC5303A, dark: 0xFF6B6B)
     static let success = Color(light: 0x2E7D46, dark: 0x54C27A)
     static let warning = Color(light: 0xB26A00, dark: 0xE0A64B)
-    static let info = Color(light: 0x33517A, dark: 0x7FA2D6)
+    static let info = Color(light: 0x2F6FB3, dark: 0x6FB0F0)
+    static let purple = Color(light: 0x6D4AB6, dark: 0xB49BF0)
 
     // Spacing scale
     enum Spacing {
@@ -102,17 +113,17 @@ extension View {
     }
 }
 
-/// Primary black/white pill button used for main actions.
+/// Brand-colored primary button used for main actions.
 struct PrimaryButtonStyle: ButtonStyle {
     var fullWidth: Bool = true
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.body.weight(.semibold))
-            .foregroundStyle(AppTheme.onAccent)
+            .foregroundStyle(AppTheme.onBrand)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.vertical, 14)
             .padding(.horizontal, 20)
-            .background(AppTheme.accent, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
+            .background(AppTheme.brandGradient, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
             .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }

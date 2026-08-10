@@ -5,6 +5,7 @@ import SwiftUI
 struct SetupServicesView: View {
     @EnvironmentObject private var app: AppState
     @State private var working: String?
+    @State private var showAIConnect = false
 
     var body: some View {
         NavigationStack {
@@ -20,21 +21,41 @@ struct SetupServicesView: View {
                     }
 
                     VStack(spacing: AppTheme.Spacing.md) {
-                        serviceRow(
-                            title: "Gmail",
-                            detail: "Find important emails, recruiter responses, interviews and things requiring your attention.",
-                            systemImage: "envelope",
-                            connected: app.connections.gmailConnected,
-                            id: "gmail"
-                        ) { await app.connectGmail() }
+                        gmailCard
 
                         serviceRow(
-                            title: "Calendar",
-                            detail: "See upcoming interviews, meetings and deadlines.",
-                            systemImage: "calendar",
-                            connected: app.connections.calendarConnected,
+                            title: "Outlook / Microsoft 365",
+                            detail: "Add Microsoft mail without changing your main Orbit identity.",
+                            systemImage: "building.2",
+                            connected: app.connections.outlookConnected,
+                            id: "outlook"
+                        ) { await app.connectOutlookAccount() }
+
+                        aiCard
+
+                        serviceRow(
+                            title: "Google Calendar",
+                            detail: "Read upcoming events from the primary Google account.",
+                            systemImage: "g.circle",
+                            connected: app.connections.googleCalendarConnected,
                             id: "calendar"
                         ) { await app.connectCalendar() }
+
+                        serviceRow(
+                            title: "Apple Calendar",
+                            detail: "Combine on-device calendars with Google and Outlook.",
+                            systemImage: "apple.logo",
+                            connected: app.connections.appleCalendarConnected,
+                            id: "apple-calendar"
+                        ) { await app.connectAppleCalendar() }
+
+                        serviceRow(
+                            title: "Apple Health",
+                            detail: "Read steps, sleep, active energy and workouts from this iPhone.",
+                            systemImage: "heart",
+                            connected: app.connections.healthConnected,
+                            id: "health"
+                        ) { await app.connectHealth() }
                     }
 
                     Label("Read-only access to start. \(AppConfig.appName) never sends email on your behalf without asking.",
@@ -44,6 +65,7 @@ struct SetupServicesView: View {
                 }
                 .padding(AppTheme.Spacing.xl)
             }
+            .sheet(isPresented: $showAIConnect) { ConnectChatGPTView().environmentObject(app) }
             .background(AppTheme.background)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: AppTheme.Spacing.sm) {
@@ -59,6 +81,88 @@ struct SetupServicesView: View {
                 .background(.ultraThinMaterial)
             }
         }
+    }
+
+    private var gmailCard: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+                Image(systemName: "envelope")
+                    .font(.title3).foregroundStyle(AppTheme.primaryText)
+                    .frame(width: 40, height: 40)
+                    .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    Text("Gmail").font(.headline).foregroundStyle(AppTheme.primaryText)
+                    Text("Scan the primary Gmail plus any additional read-only Gmail accounts you connect.")
+                        .font(.subheadline).foregroundStyle(AppTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if !app.gmailAccounts.isEmpty {
+                VStack(spacing: AppTheme.Spacing.xs) {
+                    ForEach(app.gmailAccounts) { account in
+                        HStack(spacing: AppTheme.Spacing.sm) {
+                            Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(AppTheme.success)
+                            Text(account.email).font(.caption).foregroundStyle(AppTheme.primaryText)
+                            if account.userID == app.user?.userID {
+                                Text("PRIMARY").font(.caption2.weight(.bold)).foregroundStyle(AppTheme.brand)
+                            }
+                            Spacer()
+                            Button { app.removeGmailAccount(account) } label: {
+                                Image(systemName: "xmark.circle").font(.caption).foregroundStyle(AppTheme.tertiaryText)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if working == "gmail" || working == "gmail-add" {
+                ProgressView()
+            } else {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    if !app.gmailAccounts.contains(where: { $0.userID == app.user?.userID }) {
+                        Button("Connect primary Gmail") {
+                            working = "gmail"
+                            Task { await app.connectGmailAccount(); working = nil }
+                        }
+                        .buttonStyle(SecondaryButtonStyle())
+                    }
+                    Button("Add another Gmail") {
+                        working = "gmail-add"
+                        Task { await app.connectAdditionalGmailAccount(); working = nil }
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+            }
+        }
+        .cardSurface()
+    }
+
+    private var aiCard: some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+            Image(systemName: "sparkles")
+                .font(.title3)
+                .foregroundStyle(AppTheme.brand)
+                .frame(width: 40, height: 40)
+                .background(AppTheme.brand.opacity(0.12), in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                Text("AI processing").font(.headline).foregroundStyle(AppTheme.primaryText)
+                Text("Turns job-related Gmail and Outlook messages into summaries and tracker updates for you to review.")
+                    .font(.subheadline).foregroundStyle(AppTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: AppTheme.Spacing.sm)
+            if app.connections.aiConnected {
+                Label("Ready", systemImage: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.success)
+            } else {
+                Button("Connect") { showAIConnect = true }
+                    .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .cardSurface()
     }
 
     private func serviceRow(

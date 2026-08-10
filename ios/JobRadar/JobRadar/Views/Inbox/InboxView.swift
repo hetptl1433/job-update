@@ -4,18 +4,23 @@ import SwiftUI
 /// what they demand of the user.
 struct InboxView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var inbox: EmailRepository
+    @State private var filter: EmailAccountFilter = .all
 
     var body: some View {
         NavigationStack {
             Group {
-                switch app.inbox.state {
+                switch inbox.state {
                 case .disconnected:
-                    InfoStateView(
-                        systemImage: "envelope",
-                        title: "Gmail not connected",
-                        message: "Connect Gmail to see messages that need your attention.",
-                        actionTitle: "Connect Gmail"
-                    ) { Task { await app.connectGmail() } }
+                    VStack(spacing: AppTheme.Spacing.md) {
+                        InfoStateView(systemImage: "envelope", title: "Email not connected",
+                                      message: "Connect Gmail or Outlook to see messages that need your attention.")
+                        Button("Connect Gmail") { Task { await app.connectGmailAccount() } }
+                            .buttonStyle(PrimaryButtonStyle())
+                        Button("Connect Outlook") { Task { await app.connectOutlookAccount() } }
+                            .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+                    }
+                    .padding(AppTheme.Spacing.xl)
                 case .loading, .idle:
                     LoadingStateView(message: "Loading your inbox…")
                 case .empty:
@@ -23,7 +28,7 @@ struct InboxView: View {
                                   message: "When something needs you, it'll show up here.")
                 case let .failed(message):
                     InfoStateView(systemImage: "exclamationmark.triangle", title: "Couldn't load inbox",
-                                  message: message, actionTitle: "Retry") { Task { await app.inbox.refresh() } }
+                                  message: message, actionTitle: "Retry") { Task { await app.syncEmail() } }
                 case let .loaded(messages):
                     inboxList(messages)
                 }
@@ -31,8 +36,31 @@ struct InboxView: View {
             .background(AppTheme.background)
             .navigationTitle("Inbox")
             .navigationBarTitleDisplayMode(.large)
-            .task { await app.inbox.refresh() }
-            .refreshable { await app.inbox.refresh() }
+            .safeAreaInset(edge: .top) {
+                if inbox.state.value != nil {
+                    Picker("Account", selection: $filter) {
+                        ForEach(EmailAccountFilter.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, AppTheme.Spacing.lg)
+                    .padding(.vertical, AppTheme.Spacing.sm)
+                    .background(.bar)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await app.syncEmail() } } label: {
+                        if app.isSyncing { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .tint(AppTheme.brand)
+                    .disabled(app.isSyncing)
+                }
+            }
+            .refreshable { await app.refreshInbox() }
+            .task { await app.loadInboxIfNeeded() }
+            .onChange(of: inbox.needsInitialLoad) { _, needsLoad in
+                if needsLoad { Task { await app.loadInboxIfNeeded() } }
+            }
         }
     }
 
@@ -40,7 +68,7 @@ struct InboxView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
                 ForEach(InboxSection.allCases) { section in
-                    let items = messages.filter { $0.section == section }
+                    let items = messages.filter { $0.section == section && filter.includes($0.provider) }
                     if !items.isEmpty {
                         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                             SectionHeader(title: section.rawValue)
@@ -61,5 +89,6 @@ struct InboxView: View {
 }
 
 #Preview {
-    InboxView().environmentObject(PreviewSupport.appState())
+    let app = PreviewSupport.appState()
+    return InboxView().environmentObject(app).environmentObject(app.inbox)
 }

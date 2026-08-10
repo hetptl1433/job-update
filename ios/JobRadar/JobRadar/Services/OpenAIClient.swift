@@ -1,24 +1,44 @@
 import Foundation
 
-/// Minimal direct client for the OpenAI Chat Completions API.
+/// Small Responses API client used by the personal-development build.
 ///
-/// The API key is supplied by the user at runtime and stored in the Keychain —
-/// it is never compiled into the app, committed, or logged. Used only when the
-/// user connects ChatGPT with their own key.
+/// The key is supplied at runtime and never compiled into the app or logged.
+/// A public/App Store build should proxy these calls through a backend because
+/// secrets embedded in any mobile application can ultimately be extracted.
 struct OpenAIClient {
-    let apiKey: String
-    var model: String = "gpt-4o"
-
-    private struct Request: Encodable {
-        let model: String
-        let messages: [Message]
-        struct Message: Encodable { let role: String; let content: String }
+    struct JSONSchema {
+        let name: String
+        let value: [String: Any]
     }
 
+    let apiKey: String
+    var model: String = AppConfig.openAIModel
+    var session: URLSession = .shared
+
     private struct Response: Decodable {
-        let choices: [Choice]
-        struct Choice: Decodable { let message: Message }
-        struct Message: Decodable { let content: String }
+        let status: String?
+        let output: [OutputItem]
+        let error: ErrorBody?
+        let incompleteDetails: IncompleteDetails?
+
+        enum CodingKeys: String, CodingKey {
+            case status, output, error
+            case incompleteDetails = "incomplete_details"
+        }
+
+        struct OutputItem: Decodable {
+            let type: String
+            let content: [Content]?
+        }
+
+        struct Content: Decodable {
+            let type: String
+            let text: String?
+            let refusal: String?
+        }
+
+        struct ErrorBody: Decodable { let message: String }
+        struct IncompleteDetails: Decodable { let reason: String? }
     }
 
     private struct ErrorEnvelope: Decodable {
@@ -26,24 +46,115 @@ struct OpenAIClient {
         struct ErrorBody: Decodable { let message: String }
     }
 
-    func complete(system: String, user: String) async throws -> String {
-        guard !apiKey.isEmpty else { throw APIError.notConfigured("No OpenAI key.") }
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONEncoder().encode(Request(
-            model: model,
-            messages: [.init(role: "system", content: system), .init(role: "user", content: user)]
-        ))
+    /// Confirms that the supplied credential can authenticate without sending
+    /// any user data or consuming model output tokens.
+    func validateCredential() async throws {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 30
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        authorize(&request)
+        let (data, response) = try await session.data(for: request)
+        try validate(response, data: data)
+    }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw APIError.server(status: -1, message: nil) }
-        guard (200..<300).contains(http.statusCode) else {
-            let message = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data))?.error.message
-            throw APIError.server(status: http.statusCode, message: message)
+    /// Generate text, optionally constrained to a strict JSON schema.
+    func complete(
+        system: String,
+        user: String,
+        schema: JSONSchema? = nil,
+        maxOutputTokens: Int = 4_000
+    ) async throws -> String {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw APIError.notConfigured("No OpenAI API key is connected.")
         }
-        let decoded = try JSONDecoder().decode(Response.self, from: data)
-        return decoded.choices.first?.message.content ?? ""
+
+        var payload: [String: Any] = [
+            "model": model,
+            "instructions": system,
+            "input": user,
+            "store": false,
+            "max_output_tokens": maxOutputTokens
+        ]
+        if let schema {
+            payload["text"] = [
+                "format": [
+                    "type": "json_schema",
+                    "name": schema.name,
+                    "strict": true,
+                    "schema": schema.value
+                ]
+            ]
+        }
+
+        guard JSONSerialization.isValidJSONObject(payload) else {
+            throw APIError.decoding("The AI request could not be encoded.")
+        }
+
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorize(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validate(response, data: data)
+
+        let decoded: Response
+        do {
+            decoded = try JSONDecoder().decode(Response.self, from: data)
+        } catch {
+            throw APIError.decoding("OpenAI returned an unreadable response: \(error.localizedDescription)")
+        }
+
+        if let message = decoded.error?.message {
+            throw APIError.server(status: -1, message: message)
+        }
+        if decoded.status == "incomplete" {
+            throw APIError.server(
+                status: -1,
+                message: "The AI response was incomplete (\(decoded.incompleteDetails?.reason ?? "unknown reason")). Try syncing fewer messages."
+            )
+        }
+
+        var textParts: [String] = []
+        for item in decoded.output where item.type == "message" {
+            for content in item.content ?? [] {
+                if content.type == "refusal", let refusal = content.refusal, !refusal.isEmpty {
+                    throw APIError.server(status: -1, message: refusal)
+                }
+                if content.type == "output_text", let text = content.text, !text.isEmpty {
+                    textParts.append(text)
+                }
+            }
+        }
+        let result = textParts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !result.isEmpty else {
+            throw APIError.decoding("OpenAI returned no text.")
+        }
+        return result
+    }
+
+    private func authorize(_ request: inout URLRequest) {
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    }
+
+    private func validate(_ response: URLResponse, data: Data) throws {
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.server(status: -1, message: "No HTTP response was received.")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let serverMessage = (try? JSONDecoder().decode(ErrorEnvelope.self, from: data))?.error.message
+            switch http.statusCode {
+            case 401:
+                throw APIError.server(status: 401, message: "That OpenAI API key was not accepted.")
+            case 429:
+                throw APIError.server(status: 429, message: serverMessage ?? "OpenAI rate limit or usage limit reached. Try again shortly.")
+            default:
+                throw APIError.server(status: http.statusCode, message: serverMessage)
+            }
+        }
     }
 }

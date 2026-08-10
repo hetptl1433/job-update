@@ -11,12 +11,17 @@ enum AppConfig {
     /// Short tagline used on the welcome screen.
     static let tagline = "Your life. One place."
 
-    /// Base URL for our backend. Configurable via the `APIBaseURL` Info.plist
-    /// key so development / staging / production can be swapped without a code
-    /// change. Falls back to the existing production backend.
-    static var apiBaseURL: URL {
-        let configured = Bundle.main.object(forInfoDictionaryKey: "APIBaseURL") as? String
-        return URL(string: configured ?? "https://job-update.vercel.app")!
+    /// Optional tracker/push backend. There is deliberately no production
+    /// fallback: an incorrect URL must never be treated as a working API.
+    static var apiBaseURL: URL? {
+        configuredURL(forInfoKey: "APIBaseURL")
+    }
+
+    /// Finance is deployed independently from the optional tracker/push API.
+    /// Keeping these URLs separate prevents a Finance-only server from causing
+    /// misleading job refresh failures.
+    static var financeAPIBaseURL: URL? {
+        configuredURL(forInfoKey: "FinanceAPIBaseURL")
     }
 
     /// Google OAuth client ID. Supplied by the Google Cloud console and stored
@@ -30,6 +35,41 @@ enum AppConfig {
 
     static var isGoogleConfigured: Bool { googleClientID != nil }
 
+    /// Microsoft Entra public-client registration. A client ID is intentionally
+    /// not invented; Outlook connection remains disabled until the developer
+    /// registers bundle ID `com.hetpatel.jobradar` and supplies the value.
+    static var microsoftClientID: String? {
+        let value = Bundle.main.object(forInfoDictionaryKey: "MicrosoftClientID") as? String
+        return (value?.isEmpty == false) ? value : nil
+    }
+
+    static var microsoftTenantID: String {
+        let value = Bundle.main.object(forInfoDictionaryKey: "MicrosoftTenantID") as? String
+        return value?.isEmpty == false ? value! : "common"
+    }
+
+    static var microsoftRedirectURI: String {
+        "msauth.\(Bundle.main.bundleIdentifier ?? "com.hetpatel.jobradar")://auth"
+    }
+
+    /// Cost-efficient model used for email extraction and the in-app assistant.
+    /// It supports Responses API Structured Outputs and can be overridden from
+    /// Info.plist without changing source code.
+    static var openAIModel: String {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenAIModel") as? String,
+              !value.isEmpty else { return "gpt-4o-mini" }
+        return value
+    }
+
     /// Minimum iOS shown in Settings/About.
     static let minimumOS = "17.0"
+
+    private static func configuredURL(forInfoKey key: String) -> URL? {
+        guard let configured = Bundle.main.object(forInfoDictionaryKey: key) as? String,
+              !configured.isEmpty,
+              let url = URL(string: configured),
+              url.scheme == "https",
+              url.host != nil else { return nil }
+        return url
+    }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct JobRadarApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState: AppState
     private let modelContainer: ModelContainer
@@ -19,12 +20,24 @@ struct JobRadarApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appState)
+                .environmentObject(appState.inbox)
+                .environmentObject(appState.tasks)
+                .environmentObject(appState.reminders)
+                .environmentObject(appState.calendar)
+                .environmentObject(appState.finance)
+                .environmentObject(appState.health)
+                .environmentObject(appState.automations)
                 .onOpenURL { url in
-                    // Let the Google Sign-In SDK consume its OAuth redirect.
-                    _ = appState.auth.handleRedirect(url)
+                    _ = appState.handleOpenURL(url)
                 }
                 .task {
                     await appState.notifications.requestAuthorization()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        appState.tasks.reload()
+                        appState.reminders.reload()
+                    }
                 }
         }
         .modelContainer(modelContainer)

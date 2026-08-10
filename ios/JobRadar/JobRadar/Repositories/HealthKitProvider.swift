@@ -27,11 +27,13 @@ final class HealthKitProvider: HealthProviding {
         async let energy = sumToday(HKQuantityType(.activeEnergyBurned), unit: .kilocalorie())
         async let sleep = sleepLastNight()
         async let workedOut = didWorkOutToday()
+        async let heartRate = latestHeartRate()
 
         let stepCount = (try? await steps) ?? 0
         let energyKcal = (try? await energy) ?? 0
         let sleepSeconds = (try? await sleep) ?? 0
         let workout = (try? await workedOut) ?? false
+        let bpm = (try? await heartRate) ?? 0
 
         var metrics: [HealthMetric] = [
             HealthMetric(id: "sleep", title: "Sleep",
@@ -39,10 +41,11 @@ final class HealthKitProvider: HealthProviding {
                          systemImage: "bed.double"),
             HealthMetric(id: "steps", title: "Steps", value: numberString(stepCount), systemImage: "figure.walk"),
             HealthMetric(id: "energy", title: "Active Energy", value: "\(Int(energyKcal)) kcal", systemImage: "flame"),
+            HealthMetric(id: "heart", title: "Latest Heart Rate", value: bpm > 0 ? "\(Int(bpm)) bpm" : "—", systemImage: "heart.fill"),
             HealthMetric(id: "workout", title: "Workout", value: workout ? "Completed" : "None", systemImage: "figure.run")
         ]
         // Drop metrics that returned no data at all so the UI stays honest.
-        if stepCount == 0 && energyKcal == 0 && sleepSeconds == 0 && !workout {
+        if stepCount == 0 && energyKcal == 0 && sleepSeconds == 0 && !workout && bpm == 0 {
             metrics = []
         }
         return HealthSummary(metrics: metrics, isConnected: true)
@@ -83,6 +86,22 @@ final class HealthKitProvider: HealthProviding {
             let query = HKSampleQuery(sampleType: .workoutType(), predicate: predicate, limit: 1, sortDescriptors: nil) { _, samples, error in
                 if let error { continuation.resume(throwing: error); return }
                 continuation.resume(returning: !(samples?.isEmpty ?? true))
+            }
+            store.execute(query)
+        }
+    }
+
+    private func latestHeartRate() async throws -> Double {
+        let type = HKQuantityType(.heartRate)
+        let start = Calendar.current.date(byAdding: .day, value: -1, to: .now) ?? .now
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: .now)
+        let sort = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: 1, sortDescriptors: [sort]) { _, samples, error in
+                if let error { continuation.resume(throwing: error); return }
+                let unit = HKUnit.count().unitDivided(by: .minute())
+                let value = (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit) ?? 0
+                continuation.resume(returning: value)
             }
             store.execute(query)
         }

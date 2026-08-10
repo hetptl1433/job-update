@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        guard api.isConfigured else { return }
         // Device token is opaque; safe to send. Never log tokens.
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
         Task { try? await api.registerDeviceToken(token) }
