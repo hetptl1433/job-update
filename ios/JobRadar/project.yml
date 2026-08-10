@@ -1,0 +1,144 @@
+name: JobRadar
+options:
+  bundleIdPrefix: com.hetpatel
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "4"
+packages:
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    from: "7.1.0"
+  MSAL:
+    url: https://github.com/AzureAD/microsoft-authentication-library-for-objc
+    from: "2.14.1"
+targets:
+  JobRadar:
+    type: application
+    platform: iOS
+    sources:
+      - path: JobRadar
+      - path: Shared
+    dependencies:
+      - package: GoogleSignIn
+        product: GoogleSignIn
+      - package: MSAL
+        product: MSAL
+      - target: OrbitTasksWidget
+        embed: true
+    info:
+      path: JobRadar/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Orbit
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        OpenAIModel: gpt-4o-mini
+        APIBaseURL: ""
+        FinanceAPIBaseURL: "https://api.ipodeskai.com/"
+        GIDClientID: 580282197414-mblf538qedv9amtnk0ecovdcko8h8eo9.apps.googleusercontent.com
+        MicrosoftClientID: ""
+        MicrosoftTenantID: common
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - com.googleusercontent.apps.580282197414-mblf538qedv9amtnk0ecovdcko8h8eo9
+          - CFBundleURLSchemes:
+              - orbit
+          - CFBundleURLSchemes:
+              - msauth.com.hetpatel.jobradar
+        LSApplicationQueriesSchemes:
+          - msauthv2
+          - msauthv3
+        NSCalendarsFullAccessUsageDescription: Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos and reminders.
+        NSAlarmKitUsageDescription: Orbit schedules prominent alarms for timed To Dos and reminders when you choose Alarm.
+        NSHealthShareUsageDescription: Orbit shows your sleep, steps, workouts and heart data in your daily summary. This information stays on your device unless you choose to share it.
+        NSMicrophoneUsageDescription: Orbit uses the microphone only while you use voice mode to ask your assistant a question.
+        NSSpeechRecognitionUsageDescription: Orbit transcribes what you say in voice mode so your assistant can answer using your Orbit data.
+        UIRequiredDeviceCapabilities:
+          - healthkit
+        UILaunchScreen: {}
+        UIBackgroundModes:
+          - fetch
+          - remote-notification
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.hetpatel.jobradar.refresh
+    entitlements:
+      path: JobRadar/Resources/JobRadar.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.security.application-groups:
+          - group.com.hetpatel.jobradar
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.hetpatel.jobradar
+          - $(AppIdentifierPrefix)com.microsoft.adalcache
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_BUNDLE_IDENTIFIER: com.hetpatel.jobradar
+        PRODUCT_NAME: Orbit
+        PRODUCT_MODULE_NAME: JobRadar
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VN6463GX9K
+        TARGETED_DEVICE_FAMILY: "1"
+  OrbitTasksWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: OrbitTasksWidget
+      - path: Shared
+    info:
+      path: OrbitTasksWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Orbit Tasks
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: OrbitTasksWidget/OrbitTasksWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.hetpatel.jobradar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hetpatel.jobradar.tasks-widget
+        PRODUCT_NAME: OrbitTasksWidget
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VN6463GX9K
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1"
+  JobRadarTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: JobRadarTests
+    dependencies:
+      - target: JobRadar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hetpatel.jobradar.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Orbit.app/Orbit"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  JobRadar:
+    build:
+      targets:
+        JobRadar: all
+        OrbitTasksWidget: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      coverageTargets:
+        - JobRadar
+      targets:
+        - JobRadarTests
+    archive:
+      config: Release

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>APIBaseURL</key>
+	<string></string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.hetpatel.jobradar.refresh</string>
+	</array>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Orbit</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.580282197414-mblf538qedv9amtnk0ecovdcko8h8eo9</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>orbit</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>msauth.com.hetpatel.jobradar</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>FinanceAPIBaseURL</key>
+	<string>https://api.ipodeskai.com/</string>
+	<key>GIDClientID</key>
+	<string>580282197414-mblf538qedv9amtnk0ecovdcko8h8eo9.apps.googleusercontent.com</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>msauthv2</string>
+		<string>msauthv3</string>
+	</array>
+	<key>MicrosoftClientID</key>
+	<string></string>
+	<key>MicrosoftTenantID</key>
+	<string>common</string>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Orbit schedules prominent alarms for timed To Dos and reminders when you choose Alarm.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos and reminders.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Orbit shows your sleep, steps, workouts and heart data in your daily summary. This information stays on your device unless you choose to share it.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Orbit uses the microphone only while you use voice mode to ask your assistant a question.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Orbit transcribes what you say in voice mode so your assistant can answer using your Orbit data.</string>
+	<key>OpenAIModel</key>
+	<string>gpt-4o-mini</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>healthkit</string>
+	</array>
+</dict>
+</plist>

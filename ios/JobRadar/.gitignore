@@ -1,0 +1,12 @@
+# Local server secrets. These files must never be committed or added to an
+# Xcode target.
+.env
+.env.local
+.env.*.local
+Backend/.env
+Backend/.env.local
+Backend/.env.*.local
+Backend/aws/node_modules/
+Backend/aws/.aws-sam/
+Backend/aws/samconfig.toml
+Backend/orbit-finance-aws-upload.zip
