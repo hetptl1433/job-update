@@ -30,7 +30,7 @@ struct AssistantContextBuilder {
 
     func context(for prompt: String) -> AssistantContext {
         var lines: [String] = []
-        lines.append("Connections: Gmail \(app.connections.gmailConnected ? \"connected\" : \"not connected\"), Outlook \(app.connections.outlookConnected ? \"connected\" : \"not connected\"), Calendar \(app.calendar.connectedProviders.map(\.label).sorted().joined(separator: \", \")), Health \(app.connections.healthConnected ? \"connected\" : \"not connected\").")
+        lines.append("Connections: Gmail \(app.connections.gmailConnected ? "connected" : "not connected"), Outlook \(app.connections.outlookConnected ? "connected" : "not connected"), Calendar \(app.calendar.connectedProviders.map(\.label).sorted().joined(separator: ", ")), Health \(app.connections.healthConnected ? "connected" : "not connected").")
 
         if shareFinance, case let .loaded(finance) = app.finance.state {
             let code = finance.currencyCode
@@ -57,16 +57,16 @@ struct AssistantContextBuilder {
             if asksAboutFinance, !asksAboutIncome, !finance.recentTransactions.isEmpty {
                 lines.append("Recent normalized transactions:")
                 for transaction in finance.recentTransactions.prefix(15) {
-                    lines.append("- \(transaction.date); \(transaction.displayName); \(transaction.direction.rawValue)=\(transaction.amount) \(transaction.currencyCode); category=\(transaction.category ?? \"unknown\")")
+                    lines.append("- \(transaction.date); \(transaction.displayName); \(transaction.direction.rawValue)=\(transaction.amount) \(transaction.currencyCode); category=\(transaction.category ?? "unknown")")
                 }
             }
 
             if asksAboutIncome, case let .loaded(income) = app.finance.incomeState {
                 lines.append("DETERMINISTIC INCOME TOOL RESULT (do not recompute or relabel inflow as income):")
                 for summary in income.summaries {
-                    lines.append("- currency=\(summary.currencyCode); confirmed posted this month=\(summary.thisMonth.confirmed); pending income=\(summary.thisMonth.pending); needs review excluded=\(summary.thisMonth.needsReview); confirmed last month=\(summary.lastMonth.confirmed); change amount=\(summary.changeAmount.map { String(describing: $0) } ?? \"undefined\"); change percent=\(summary.changePercent.map { String(describing: $0) } ?? \"undefined\"); confirmed YTD=\(summary.yearToDate); average monthly=\(summary.averageMonthly); estimated annual=\(summary.estimatedAnnual.map { String(describing: $0) } ?? \"unavailable\")")
+                    lines.append("- currency=\(summary.currencyCode); confirmed posted this month=\(summary.thisMonth.confirmed); pending income=\(summary.thisMonth.pending); needs review excluded=\(summary.thisMonth.needsReview); confirmed last month=\(summary.lastMonth.confirmed); change amount=\(summary.changeAmount.map { String(describing: $0) } ?? "undefined"); change percent=\(summary.changePercent.map { String(describing: $0) } ?? "undefined"); confirmed YTD=\(summary.yearToDate); average monthly=\(summary.averageMonthly); estimated annual=\(summary.estimatedAnnual.map { String(describing: $0) } ?? "unavailable")")
                     for source in summary.sources.prefix(20) {
-                        lines.append("- income source: \(source.name); type=\(source.type.rawValue); frequency=\(source.frequency.rawValue); this month=\(source.thisMonth); YTD=\(source.yearToDate); average deposit=\(source.averagePayment); next expected=\(source.nextExpectedPaymentDate ?? \"unavailable\"); user confirmed=\(source.userConfirmed)")
+                        lines.append("- income source: \(source.name); type=\(source.type.rawValue); frequency=\(source.frequency.rawValue); this month=\(source.thisMonth); YTD=\(source.yearToDate); average deposit=\(source.averagePayment); next expected=\(source.nextExpectedPaymentDate ?? "unavailable"); user confirmed=\(source.userConfirmed)")
                     }
                     if !summary.history.isEmpty {
                         lines.append("- confirmed income history: " + summary.history.map { "\($0.month)=\($0.confirmed)" }.joined(separator: "; "))
@@ -125,7 +125,7 @@ struct AssistantContextBuilder {
         if case let .loaded(messages) = inbox.state, !messages.isEmpty {
             lines.append("Recent important emails:")
             for message in messages.prefix(10) {
-                lines.append("- [\(message.provider.label); \(message.mailboxEmail)] \(message.sender): \(message.subject) — \(message.aiSummary)\(message.actionRequired ? \" [action required]\" : \"\")")
+                lines.append("- [\(message.provider.label); \(message.mailboxEmail)] \(message.sender): \(message.subject) — \(message.aiSummary)\(message.actionRequired ? " [action required]" : "")")
             }
         }
 
