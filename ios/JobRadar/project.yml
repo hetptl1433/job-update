@@ -131,6 +131,7 @@ targets:
         CFBundleDisplayName: Orbit
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        WKApplication: true
         WKCompanionAppBundleIdentifier: com.hetpatel.jobradar
         NSMicrophoneUsageDescription: Orbit uses the microphone only while you talk with your assistant.
         CFBundleURLTypes:
