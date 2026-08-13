@@ -73,7 +73,7 @@
 	<key>OpenAIModel</key>
 	<string>gpt-4o-mini</string>
 	<key>OpenAIRealtimeModel</key>
-	<string>gpt-realtime-2.1</string>
+	<string>gpt-realtime</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

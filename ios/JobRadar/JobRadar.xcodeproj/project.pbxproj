@@ -28,7 +28,6 @@
 		4378C05AB70D2274DEC6090C /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBF66E3107D8E4735BEC5AA0 /* AIService.swift */; };
 		459BA54C06C8F106D606E512 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D4B77A2C8AE025E53D493F29 /* Assets.xcassets */; };
 		45B6B735C372EEE93AE97A5A /* RealtimeClientSecretProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A003E5C361168415CDA11A84 /* RealtimeClientSecretProvider.swift */; };
-		4A7D1B4C49FD4FCB8547762C /* LiveVoiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D7988ACD3D141AA80C2C7C1 /* LiveVoiceView.swift */; };
 		45D2C0B582A1A3CC42419458 /* AuthenticationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98A12AB7C7A21F5673C47A9B /* AuthenticationManager.swift */; };
 		45FEE3D71293E4ABF6D63D6D /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF1131EEA886B356B138F53D /* TasksView.swift */; };
 		4AC8F04E4D9D5F86E1ADD8E0 /* WatchVoiceSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10EAC59F401CF1E337C7449 /* WatchVoiceSync.swift */; };
@@ -93,6 +92,7 @@
 		F2D273D0E80250C0CD055A79 /* GoogleCalendarAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4120879E57055EA65484B9 /* GoogleCalendarAPIClient.swift */; };
 		F4817B665273A489299E4C6D /* InboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4174A98006638BAEFA70EDC /* InboxView.swift */; };
 		FABE4A082F1034A3C64583E4 /* WatchTaskSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F58CBFE7A6F1F21E7C63EF05 /* WatchTaskSync.swift */; };
+		FF44CAE36F9F6F587281F59E /* LiveVoiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099084949998403D3F66E645 /* LiveVoiceView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -148,6 +148,7 @@
 		02C24B60AE2C3A8BC1A78717 /* CompleteTaskIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompleteTaskIntent.swift; sourceTree = "<group>"; };
 		07E6B2E1062D708BF521B592 /* WatchTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTaskStore.swift; sourceTree = "<group>"; };
 		081316B189E1395A742756AA /* JobApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobApplication.swift; sourceTree = "<group>"; };
+		099084949998403D3F66E645 /* LiveVoiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceView.swift; sourceTree = "<group>"; };
 		09D2203241477E45D5C4A7F8 /* VoiceAssistantAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAssistantAudio.swift; sourceTree = "<group>"; };
 		0B3C3E41EBC0220B2D1900CB /* VoiceFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceFeatureTests.swift; sourceTree = "<group>"; };
 		0B705B72FF8F79E5F808FDD8 /* UnifiedEmailModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEmailModels.swift; sourceTree = "<group>"; };
@@ -189,7 +190,6 @@
 		8E7D5E6100301DF890FDDC22 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		93A8C891ED8B931275D311E9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		98A12AB7C7A21F5673C47A9B /* AuthenticationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticationManager.swift; sourceTree = "<group>"; };
-		9D7988ACD3D141AA80C2C7C1 /* LiveVoiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveVoiceView.swift; sourceTree = "<group>"; };
 		9D61703E02BC806EF8E7ABB2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9E1773AC47E7872B50A91F32 /* IncomeCalculatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomeCalculatorView.swift; sourceTree = "<group>"; };
 		9FC343A20B40D82C59F783A8 /* TaskRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRepository.swift; sourceTree = "<group>"; };
@@ -509,7 +509,7 @@
 			isa = PBXGroup;
 			children = (
 				ECFAC6C4A0CFBF7AAF27CD01 /* AssistantView.swift */,
-				9D7988ACD3D141AA80C2C7C1 /* LiveVoiceView.swift */,
+				099084949998403D3F66E645 /* LiveVoiceView.swift */,
 			);
 			path = Assistant;
 			sourceTree = "<group>";
@@ -787,8 +787,8 @@
 				823931BA3DF810460B341687 /* JobRepository.swift in Sources */,
 				81CAADB84CA34EB7F028B7E9 /* JobsView.swift in Sources */,
 				86DB444124A80BA9FED908F1 /* KeychainStore.swift in Sources */,
+				FF44CAE36F9F6F587281F59E /* LiveVoiceView.swift in Sources */,
 				8512DF0E7CB12FDE8A850D5C /* LoadState.swift in Sources */,
-				4A7D1B4C49FD4FCB8547762C /* LiveVoiceView.swift in Sources */,
 				17844158F5A6D935114B4FA0 /* MainTabView.swift in Sources */,
 				3DE00414E07A72E364DE8E3B /* MicrosoftAuthService.swift in Sources */,
 				CE1444C6FA85710E61AA0A45 /* MockData.swift in Sources */,
