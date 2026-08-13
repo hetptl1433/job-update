@@ -177,16 +177,6 @@ final class OpenAIRealtimeSession: ObservableObject {
         audioIO.stop()
     }
 
-    /// Compatibility for the owner's BYOK iPhone flow. Production callers
-    /// should mint a short-lived credential and call the credential overload.
-    func connect(apiKey: String, instructions: String) async {
-        await connect(
-            credential: RealtimeClientCredential(value: apiKey),
-            model: "gpt-realtime-2.1",
-            instructions: instructions
-        )
-    }
-
     /// Connects with either an ephemeral client secret or another accepted
     /// bearer credential. Pass an empty `instructions` string only when the
     /// client secret was minted with the full session configuration; in that
@@ -680,7 +670,7 @@ final class OpenAIRealtimeSession: ObservableObject {
 
     private func updatePhase() {
         let next: LiveVoicePhase
-        if state == .idle, let errorMessage {
+        if let errorMessage {
             next = .failed(errorMessage)
         } else {
             switch state {
