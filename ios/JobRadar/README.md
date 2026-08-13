@@ -131,7 +131,7 @@ ChatGPT Plus. The model defaults to `gpt-4o-mini` and can be changed with the
 `OpenAIModel` Info.plist value.
 
 Orbit Chat's **Live conversation** uses the OpenAI Realtime API with
-`gpt-realtime-2.1` by default (`OpenAIRealtimeModel` overrides it). It streams
+`gpt-realtime` by default (`OpenAIRealtimeModel` overrides it). It streams
 24 kHz microphone audio and native model speech over one continuous session,
 shows transcript bubbles as turns complete, and seeds a new session with the
 protected on-device conversation plus the current privacy-filtered Orbit data

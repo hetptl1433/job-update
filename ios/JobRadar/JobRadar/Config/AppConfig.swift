@@ -66,7 +66,7 @@ enum AppConfig {
     /// be overridden without changing source code.
     static var openAIRealtimeModel: String {
         guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenAIRealtimeModel") as? String,
-              !value.isEmpty else { return "gpt-realtime-2.1" }
+              !value.isEmpty else { return "gpt-realtime" }
         return value
     }
 

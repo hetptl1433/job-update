@@ -40,7 +40,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         OpenAIModel: gpt-4o-mini
-        OpenAIRealtimeModel: gpt-realtime-2.1
+        OpenAIRealtimeModel: gpt-realtime
         APIBaseURL: ""
         FinanceAPIBaseURL: "https://api.ipodeskai.com/"
         GIDClientID: 580282197414-mblf538qedv9amtnk0ecovdcko8h8eo9.apps.googleusercontent.com

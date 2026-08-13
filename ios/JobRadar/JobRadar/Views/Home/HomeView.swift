@@ -10,8 +10,6 @@ struct HomeView: View {
     @Query(sort: [SortDescriptor(\JobApplication.updatedAt, order: .reverse)])
     private var jobs: [JobApplication]
 
-    @State private var assistantPrompt = ""
-    @State private var openAssistant = false
     @State private var showSettings = false
     @State private var showCalendar = false
     @State private var showHealth = false
@@ -58,9 +56,6 @@ struct HomeView: View {
                         .tint(AppTheme.primaryText)
                     }
                 }
-                .navigationDestination(isPresented: $openAssistant) {
-                    AssistantView(initialPrompt: assistantPrompt)
-                }
                 .sheet(isPresented: $showSettings) { SettingsView() }
                 .sheet(isPresented: $showCalendar) { CalendarTimelineView() }
                 .sheet(isPresented: $showHealth) { HealthView() }
@@ -103,8 +98,7 @@ struct HomeView: View {
     private var aiInput: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
             Button {
-                assistantPrompt = ""
-                openAssistant = true
+                app.assistantLaunch = .chat
             } label: {
                 HStack(spacing: AppTheme.Spacing.md) {
                     Image(systemName: "sparkles").foregroundStyle(AppTheme.brand)

@@ -1,15 +1,6 @@
 import SwiftData
 import SwiftUI
 
-extension RealtimeTurnRole {
-    var chatRole: ChatMessage.Role {
-        switch self {
-        case .user: .user
-        case .assistant: .assistant
-        }
-    }
-}
-
 /// A personal-data assistant. It reasons over the user's jobs, inbox, calendar
 /// and connections via the connected ChatGPT (OpenAI) — not a generic chatbot.
 /// The request is a prompt plus a compact, structured context; the app holds no
@@ -24,12 +15,8 @@ struct AssistantView: View {
     @State private var input: String
     @State private var sending = false
     @State private var showConnect = false
-    @State private var didAutoStartVoice = false
     @State private var didRestoreConversation = false
-    @StateObject private var realtime = OpenAIRealtimeSession()
     @AppStorage("orbit.ai.financeContextEnabled") private var shareFinanceWithAssistant = false
-
-    private let startsListening: Bool
 
     private let suggestions = [
         "Did any recruiter contact me today?",
@@ -43,16 +30,15 @@ struct AssistantView: View {
         "Summarize my day."
     ]
 
-    init(initialPrompt: String = "", startsListening: Bool = false) {
+    init(initialPrompt: String = "") {
         _input = State(initialValue: initialPrompt)
-        self.startsListening = startsListening
     }
 
     var body: some View {
         Group {
             if app.connections.aiConnected {
                 VStack(spacing: 0) {
-                    if messages.isEmpty && !realtime.isActive {
+                    if messages.isEmpty {
                         emptyState
                     } else {
                         conversation
@@ -71,7 +57,6 @@ struct AssistantView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("New conversation", systemImage: "square.and.pencil") {
-                            endLiveConversation()
                             messages = []
                             AssistantConversationStore.clear()
                         }
@@ -83,12 +68,6 @@ struct AssistantView: View {
             }
         }
         .sheet(isPresented: $showConnect) { ConnectChatGPTView().environmentObject(app) }
-        .onChange(of: realtime.completedTurn) { _, turn in
-            guard let turn else { return }
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                messages.append(ChatMessage(role: turn.role.chatRole, text: turn.text))
-            }
-        }
         .onChange(of: messages) { _, messages in
             guard didRestoreConversation else { return }
             AssistantConversationStore.save(messages)
@@ -98,12 +77,6 @@ struct AssistantView: View {
                 messages = AssistantConversationStore.load()
                 didRestoreConversation = true
             }
-            guard startsListening, !didAutoStartVoice, app.connections.aiConnected else { return }
-            didAutoStartVoice = true
-            await beginLiveConversation()
-        }
-        .onDisappear {
-            realtime.disconnect()
         }
     }
 
@@ -134,7 +107,7 @@ struct AssistantView: View {
                 .padding(.top, AppTheme.Spacing.xl)
 
                 Button {
-                    Task { await beginLiveConversation() }
+                    app.assistantLaunch = .voice
                 } label: {
                     Label("Start live conversation", systemImage: "waveform.circle.fill")
                         .font(.headline)
@@ -169,13 +142,6 @@ struct AssistantView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: AppTheme.Spacing.md) {
-                    if messages.isEmpty,
-                       realtime.liveUserText.isEmpty,
-                       realtime.liveAssistantText.isEmpty {
-                        LiveReadyCard(isConnecting: realtime.state == .connecting)
-                            .transition(.scale(scale: 0.92).combined(with: .opacity))
-                    }
-
                     ForEach(messages) { message in
                         MessageBubble(message: message)
                             .id(message.id)
@@ -185,28 +151,7 @@ struct AssistantView: View {
                             )
                     }
 
-                    if !realtime.liveUserText.isEmpty {
-                        MessageBubble(
-                            role: .user,
-                            text: realtime.liveUserText,
-                            isStreaming: true
-                        )
-                        .id("live-user")
-                        .transition(.scale(scale: 0.86, anchor: .bottomTrailing).combined(with: .opacity))
-                    }
-
-                    if !realtime.liveAssistantText.isEmpty {
-                        MessageBubble(
-                            role: .assistant,
-                            text: realtime.liveAssistantText,
-                            isStreaming: true
-                        )
-                        .id("live-assistant")
-                        .transition(.scale(scale: 0.86, anchor: .bottomLeading).combined(with: .opacity))
-                    }
-
-                    if (sending && !realtime.isActive)
-                        || (realtime.isResponding && realtime.liveAssistantText.isEmpty) {
+                    if sending {
                         ThinkingBubble()
                             .id("assistant-thinking")
                             .transition(.scale(scale: 0.86, anchor: .bottomLeading).combined(with: .opacity))
@@ -220,101 +165,49 @@ struct AssistantView: View {
             .onChange(of: messages.count) { _, _ in
                 scrollToBottom(proxy)
             }
-            .onChange(of: realtime.liveUserText) { _, _ in
-                scrollToBottom(proxy)
-            }
-            .onChange(of: realtime.liveAssistantText) { _, _ in
-                scrollToBottom(proxy)
-            }
-            .onChange(of: realtime.isResponding) { _, _ in
-                scrollToBottom(proxy)
-            }
             .animation(.spring(response: 0.38, dampingFraction: 0.84), value: messages.count)
-            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: realtime.liveUserText.isEmpty)
-            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: realtime.liveAssistantText.isEmpty)
         }
     }
 
     private var inputBar: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            if realtime.isActive {
-                HStack {
-                    HStack(spacing: AppTheme.Spacing.sm) {
-                        LivePulse(isActive: realtime.state == .connected && !realtime.isMuted)
-                        Label(liveStatus, systemImage: liveStatusIcon)
-                    }
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.coral)
-                    Spacer()
-                    Button("End live") { endLiveConversation() }
-                        .font(.caption.weight(.semibold))
-                }
-            }
-
-            if let error = realtime.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.destructive)
-            }
-
-            HStack(spacing: AppTheme.Spacing.sm) {
-                TextField("Ask anything…", text: $input, axis: .vertical)
-                    .lineLimit(1...4)
-                    .padding(.horizontal, AppTheme.Spacing.md)
-                    .padding(.vertical, AppTheme.Spacing.sm)
-                    .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous).strokeBorder(AppTheme.border, lineWidth: 1))
-                    .onSubmit(send)
-
-                Button {
-                    if realtime.isActive {
-                        realtime.toggleMute()
-                    } else {
-                        Task { await beginLiveConversation() }
-                    }
-                } label: {
-                    Image(systemName: realtime.isActive
-                          ? (realtime.isMuted ? "mic.slash.circle.fill" : "waveform.circle.fill")
-                          : "waveform.circle.fill")
-                        .font(.title)
-                        .foregroundStyle(realtime.isActive && !realtime.isMuted ? AppTheme.coral : AppTheme.primaryText)
-                        .frame(width: 44, height: 44)
-                }
-                .disabled(sending || realtime.state == .connecting)
-                .accessibilityLabel(realtime.isActive
-                                    ? (realtime.isMuted ? "Unmute live conversation" : "Mute live conversation")
-                                    : "Start live conversation")
-
-                Button { send() } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.title)
-                }
-                .tint(AppTheme.brand)
-                .disabled(
-                    input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || sending
-                    || realtime.state == .connecting
+        HStack(spacing: AppTheme.Spacing.sm) {
+            TextField("Ask anything…", text: $input, axis: .vertical)
+                .lineLimit(1...4)
+                .padding(.horizontal, AppTheme.Spacing.md)
+                .padding(.vertical, AppTheme.Spacing.sm)
+                .background(
+                    AppTheme.secondarySurface,
+                    in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                        .strokeBorder(AppTheme.border, lineWidth: 1)
+                )
+                .onSubmit(send)
+
+            Button {
+                app.assistantLaunch = .voice
+            } label: {
+                Image(systemName: "waveform.circle.fill")
+                    .font(.title)
+                    .foregroundStyle(AppTheme.coral)
+                    .frame(width: 44, height: 44)
             }
+            .accessibilityLabel("Open live voice")
+
+            Button { send() } label: {
+                Image(systemName: "arrow.up.circle.fill").font(.title)
+            }
+            .tint(AppTheme.brand)
+            .disabled(
+                input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || sending
+            )
         }
         .padding(AppTheme.Spacing.md)
         .background(.ultraThinMaterial)
     }
 
-    private var liveStatus: String {
-        if realtime.state == .connecting { return "Connecting live voice…" }
-        if realtime.isMuted { return "Microphone muted" }
-        if realtime.isUserSpeaking { return "Listening…" }
-        if realtime.isAssistantSpeaking { return "Orbit is speaking…" }
-        if realtime.isResponding { return "Orbit is thinking…" }
-        return "Live — just start talking"
-    }
-
-    private var liveStatusIcon: String {
-        if realtime.state == .connecting { return "network" }
-        if realtime.isMuted { return "mic.slash.fill" }
-        if realtime.isAssistantSpeaking { return "speaker.wave.2.fill" }
-        return "waveform"
-    }
 
     // MARK: Context + send
 
@@ -330,18 +223,6 @@ struct AssistantView: View {
     private func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !sending else { return }
-
-        if realtime.isConnected {
-            messages.append(ChatMessage(role: .user, text: text))
-            input = ""
-            if let toolReply = runStructuredTaskTool(text) {
-                messages.append(ChatMessage(role: .assistant, text: toolReply))
-                realtime.recordLocalExchange(userText: text, assistantText: toolReply)
-            } else {
-                realtime.sendText(text)
-            }
-            return
-        }
 
         messages.append(ChatMessage(role: .user, text: text))
         input = ""
@@ -368,42 +249,6 @@ struct AssistantView: View {
                 sending = false
             }
         }
-    }
-
-    private func beginLiveConversation() async {
-        guard !sending, !realtime.isActive else { return }
-        guard let key = KeychainStore.get(KeychainKeys.openAIKey), !key.isEmpty else {
-            showConnect = true
-            return
-        }
-
-        let liveContext = contextBuilder.liveContext()
-        let instructions = AssistantPrompt.realtimeInstructions(
-            context: liveContext,
-            history: messages
-        )
-        do {
-            let credential = try await RealtimeClientSecretProvider(apiKey: key)
-                .mintCredential(
-                    model: AppConfig.openAIRealtimeModel,
-                    instructions: instructions
-                )
-            await realtime.connect(
-                credential: credential,
-                model: AppConfig.openAIRealtimeModel,
-                instructions: ""
-            )
-        } catch {
-            realtime.disconnect()
-            messages.append(ChatMessage(
-                role: .assistant,
-                text: "I couldn't start live voice: \(error.localizedDescription)"
-            ))
-        }
-    }
-
-    private func endLiveConversation() {
-        realtime.disconnect()
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
@@ -593,74 +438,6 @@ private struct ThinkingBubble: View {
         }
         .frame(maxWidth: .infinity)
         .accessibilityLabel("Orbit is thinking")
-    }
-}
-
-private struct LiveReadyCard: View {
-    let isConnecting: Bool
-
-    var body: some View {
-        VStack(spacing: AppTheme.Spacing.lg) {
-            ZStack {
-                Circle()
-                    .fill(AppTheme.coral.opacity(0.09))
-                    .frame(width: 92, height: 92)
-                Circle()
-                    .fill(AppTheme.coral.opacity(0.14))
-                    .frame(width: 62, height: 62)
-                Image(systemName: isConnecting ? "network" : "waveform")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(AppTheme.coral)
-            }
-
-            VStack(spacing: AppTheme.Spacing.sm) {
-                Text(isConnecting ? "Starting live conversation…" : "I'm listening")
-                    .font(.headline)
-                    .foregroundStyle(AppTheme.primaryText)
-                Text(isConnecting
-                     ? "Orbit is preparing your private context and live audio."
-                     : "Talk naturally, pause when you're done, and interrupt whenever you want.")
-                    .font(.subheadline)
-                    .foregroundStyle(AppTheme.secondaryText)
-                    .multilineTextAlignment(.center)
-            }
-
-            if isConnecting {
-                ProgressView().tint(AppTheme.coral)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, AppTheme.Spacing.xxl)
-        .padding(.horizontal, AppTheme.Spacing.lg)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct LivePulse: View {
-    let isActive: Bool
-    @State private var pulse = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(AppTheme.coral.opacity(0.35), lineWidth: 2)
-                .scaleEffect(pulse && isActive ? 1.9 : 1)
-                .opacity(pulse && isActive ? 0 : 0.8)
-            Circle()
-                .fill(isActive ? AppTheme.coral : AppTheme.tertiaryText)
-        }
-        .frame(width: 8, height: 8)
-        .onAppear { updateAnimation() }
-        .onChange(of: isActive) { _, _ in updateAnimation() }
-        .accessibilityHidden(true)
-    }
-
-    private func updateAnimation() {
-        pulse = false
-        guard isActive else { return }
-        withAnimation(.easeOut(duration: 1.25).repeatForever(autoreverses: false)) {
-            pulse = true
-        }
     }
 }
 
