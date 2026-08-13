@@ -25,6 +25,7 @@ struct CompleteTaskIntent: AppIntent {
         if #available(iOS 26.0, *) { try? AlarmManager.shared.cancel(id: id) }
         SharedCalendarEventDeletion.remove(identifier: task?.appleCalendarEventID)
         WidgetCenter.shared.reloadTimelines(ofKind: "OrbitTasksWidget")
+        WidgetCenter.shared.reloadTimelines(ofKind: "OrbitRemindersWidget")
         return .result()
     }
 }

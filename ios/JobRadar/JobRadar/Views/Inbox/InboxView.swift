@@ -67,6 +67,42 @@ struct InboxView: View {
     private func inboxList(_ messages: [InboxMessage]) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                if let message = inbox.refreshError {
+                    HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+                        Image(systemName: "wifi.exclamationmark")
+                            .foregroundStyle(AppTheme.warning)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Showing your saved inbox")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AppTheme.primaryText)
+                            Text(message)
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .lineLimit(2)
+                        }
+                        Spacer(minLength: AppTheme.Spacing.sm)
+                        Button("Retry") { Task { await app.syncEmail() } }
+                            .font(.caption.weight(.semibold))
+                    }
+                    .cardSurface(padding: AppTheme.Spacing.md)
+                } else if app.isSyncing {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        ProgressView().controlSize(.small)
+                        Text(app.syncStageMessage ?? "Refreshing your inbox…")
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                } else if let snapshotDate = inbox.snapshotDate {
+                    Label(
+                        "Updated \(snapshotDate.formatted(.relative(presentation: .named)))",
+                        systemImage: "checkmark.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                }
+
                 ForEach(InboxSection.allCases) { section in
                     let items = messages.filter { $0.section == section && filter.includes($0.provider) }
                     if !items.isEmpty {

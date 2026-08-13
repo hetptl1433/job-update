@@ -16,6 +16,20 @@ struct CompleteReminderIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         guard let id = UUID(uuidString: reminderID) else { return .result() }
+        if let task = SharedTaskStore.load().first(where: { $0.id == id }) {
+            _ = SharedTaskStore.complete(id: id)
+            UNUserNotificationCenter.current().removePendingNotificationRequests(
+                withIdentifiers: ["orbit-task-\(id.uuidString)", "orbit-reminder-\(id.uuidString)"]
+            )
+            if #available(iOS 26.0, *) { try? AlarmManager.shared.cancel(id: id) }
+            SharedCalendarEventDeletion.remove(identifier: task.appleCalendarEventID)
+            WidgetCenter.shared.reloadTimelines(ofKind: "OrbitTasksWidget")
+            WidgetCenter.shared.reloadTimelines(ofKind: "OrbitRemindersWidget")
+            return .result()
+        }
+
+        // Fallback for an old widget timeline invoked before the app has had a
+        // chance to run the one-time Reminder-to-To-Do migration.
         let reminder = SharedReminderStore.load().first { $0.id == id }
         _ = SharedReminderStore.complete(id: id)
         UNUserNotificationCenter.current().removePendingNotificationRequests(

@@ -7,20 +7,54 @@ private struct TasksEntry: TimelineEntry {
 }
 
 private struct TasksProvider: TimelineProvider {
-    func placeholder(in context: Context) -> TasksEntry { TasksEntry(date: .now, tasks: []) }
-    func getSnapshot(in context: Context, completion: @escaping (TasksEntry) -> Void) {
-        completion(TasksEntry(date: .now, tasks: SharedTaskStore.prioritized(SharedTaskStore.load())))
+    func placeholder(in context: Context) -> TasksEntry {
+        TasksEntry(date: .now, tasks: [])
     }
+
+    func getSnapshot(in context: Context, completion: @escaping (TasksEntry) -> Void) {
+        completion(entry())
+    }
+
     func getTimeline(in context: Context, completion: @escaping (Timeline<TasksEntry>) -> Void) {
-        let entry = TasksEntry(date: .now, tasks: SharedTaskStore.prioritized(SharedTaskStore.load()))
-        let refresh = Calendar.current.date(byAdding: .minute, value: 20, to: .now) ?? .now.addingTimeInterval(1_200)
-        completion(Timeline(entries: [entry], policy: .after(refresh)))
+        let refresh = Calendar.current.date(byAdding: .minute, value: 20, to: .now)
+            ?? .now.addingTimeInterval(1_200)
+        completion(Timeline(entries: [entry()], policy: .after(refresh)))
+    }
+
+    private func entry() -> TasksEntry {
+        TasksEntry(
+            date: .now,
+            tasks: SharedTaskStore.prioritized(SharedTaskStore.load())
+        )
+    }
+}
+
+private struct ScheduledTasksProvider: TimelineProvider {
+    func placeholder(in context: Context) -> TasksEntry {
+        TasksEntry(date: .now, tasks: [])
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping (TasksEntry) -> Void) {
+        completion(entry())
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<TasksEntry>) -> Void) {
+        let refresh = Calendar.current.date(byAdding: .minute, value: 15, to: .now)
+            ?? .now.addingTimeInterval(900)
+        completion(Timeline(entries: [entry()], policy: .after(refresh)))
+    }
+
+    private func entry() -> TasksEntry {
+        let scheduled = SharedTaskStore.prioritized(SharedTaskStore.load())
+            .filter { $0.dueDate != nil }
+        return TasksEntry(date: .now, tasks: scheduled)
     }
 }
 
 private struct TasksWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: TasksEntry
+    var scheduledOnly = false
 
     private var limit: Int {
         switch family {
@@ -32,201 +66,251 @@ private struct TasksWidgetView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Link(destination: URL(string: "orbit://tasks")!) {
-                    Text("TODAY").font(.caption.weight(.bold)).tracking(0.8)
-                }
-                .foregroundStyle(.primary)
-                Spacer()
-                Text("\(entry.tasks.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                Link(destination: URL(string: "orbit://tasks/new")!) {
-                    Image(systemName: "plus.circle.fill")
-                }
-            }
-            .padding(.bottom, 8)
+            header
+                .padding(.bottom, 8)
 
             if entry.tasks.isEmpty {
                 Spacer()
-                Label("All clear", systemImage: "checkmark.circle")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Label(
+                    scheduledOnly ? "Nothing scheduled" : "All clear",
+                    systemImage: scheduledOnly ? "calendar.badge.checkmark" : "checkmark.circle.fill"
+                )
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
                 Spacer()
             } else {
                 ForEach(entry.tasks.prefix(limit)) { task in
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Button(intent: CompleteTaskIntent(taskID: task.id.uuidString)) {
-                            Image(systemName: "circle")
-                                .font(.caption)
-                                .foregroundStyle(.primary)
-                        }
-                        .buttonStyle(.plain)
-                        Link(destination: URL(string: "orbit://tasks/\(task.id.uuidString)")!) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(task.title).font(.caption.weight(.medium)).lineLimit(1)
-                                if family != .systemSmall, let detail = detail(task) {
-                                    Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                            }
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                    TaskWidgetRow(task: task, showsDetail: family != .systemSmall)
+                    if task.id != entry.tasks.prefix(limit).last?.id {
+                        Divider().opacity(0.45)
                     }
-                    .padding(.vertical, family == .systemLarge ? 5 : 3)
-                    if task.id != entry.tasks.prefix(limit).last?.id { Divider().opacity(0.45) }
                 }
                 Spacer(minLength: 0)
             }
         }
         .containerBackground(.background, for: .widget)
+    }
+
+    private var header: some View {
+        HStack(spacing: 7) {
+            Link(destination: URL(string: "orbit://tasks")!) {
+                Text(scheduledOnly ? (family == .systemSmall ? "DUE" : "SCHEDULED") : "TO DO")
+                    .font(.caption.weight(.bold))
+                    .tracking(0.8)
+            }
+            .foregroundStyle(.primary)
+            Spacer(minLength: 4)
+            Text("\(entry.tasks.count)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Link(destination: URL(string: "orbit://assistant")!) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.caption.weight(.semibold))
+            }
+            .accessibilityLabel("Chat with Orbit")
+            Link(destination: URL(string: "orbit://tasks/new")!) {
+                Image(systemName: "plus.circle.fill")
+            }
+            .accessibilityLabel("Add To Do")
+        }
+        .foregroundStyle(.primary)
+    }
+}
+
+private struct TaskWidgetRow: View {
+    @Environment(\.widgetFamily) private var family
+    let task: TaskItem
+    var showsDetail: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Button(intent: CompleteTaskIntent(taskID: task.id.uuidString)) {
+                Image(systemName: "circle")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Complete \(task.title)")
+
+            Link(destination: URL(string: "orbit://tasks/\(task.id.uuidString)")!) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(task.title)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                    if showsDetail, let detail = detail(task) {
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(task.isOverdue ? Color.red : Color.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, family == .systemLarge ? 5 : 3)
     }
 
     private func detail(_ task: TaskItem) -> String? {
         if task.isOverdue { return "Overdue" }
         if let date = task.dueDate {
-            return date.formatted(date: task.isDueToday ? .omitted : .abbreviated, time: .shortened)
+            return date.formatted(
+                date: task.isDueToday ? .omitted : .abbreviated,
+                time: .shortened
+            )
         }
-        return task.source == .manual ? nil : task.source.label
+        return task.source == .manual ? "No date" : task.source.label
     }
 }
 
 struct OrbitTasksWidget: Widget {
     let kind = "OrbitTasksWidget"
+
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: TasksProvider()) { entry in
             TasksWidgetView(entry: entry)
         }
-        .configurationDisplayName("Orbit Today")
-        .description("Your highest-priority Orbit tasks.")
+        .configurationDisplayName("Orbit To Do")
+        .description("Your unified To Do list with readable text and quick actions.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
-private struct RemindersEntry: TimelineEntry {
+/// Keeps the former widget kind so existing installations upgrade in place,
+/// but now reads scheduled items from the same unified To Do store.
+struct OrbitScheduledWidget: Widget {
+    let kind = "OrbitRemindersWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: ScheduledTasksProvider()) { entry in
+            TasksWidgetView(entry: entry, scheduledOnly: true)
+        }
+        .configurationDisplayName("Orbit Scheduled")
+        .description("Dated To Do items that also sync with Apple Calendar.")
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+private struct AssistantEntry: TimelineEntry {
     let date: Date
-    let reminders: [ReminderItem]
 }
 
-private struct RemindersProvider: TimelineProvider {
-    func placeholder(in context: Context) -> RemindersEntry { RemindersEntry(date: .now, reminders: []) }
-    func getSnapshot(in context: Context, completion: @escaping (RemindersEntry) -> Void) {
-        completion(RemindersEntry(date: .now, reminders: openReminders()))
-    }
-    func getTimeline(in context: Context, completion: @escaping (Timeline<RemindersEntry>) -> Void) {
-        let entry = RemindersEntry(date: .now, reminders: openReminders())
-        let refresh = Calendar.current.date(byAdding: .minute, value: 15, to: .now) ?? .now.addingTimeInterval(900)
-        completion(Timeline(entries: [entry], policy: .after(refresh)))
+private struct AssistantProvider: TimelineProvider {
+    func placeholder(in context: Context) -> AssistantEntry { AssistantEntry(date: .now) }
+
+    func getSnapshot(in context: Context, completion: @escaping (AssistantEntry) -> Void) {
+        completion(AssistantEntry(date: .now))
     }
 
-    private func openReminders() -> [ReminderItem] {
-        SharedReminderStore.load().filter { !$0.isCompleted }.sorted { $0.fireDate < $1.fireDate }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<AssistantEntry>) -> Void) {
+        completion(Timeline(entries: [AssistantEntry(date: .now)], policy: .never))
     }
 }
 
-private struct RemindersWidgetView: View {
+private struct AssistantWidgetView: View {
     @Environment(\.widgetFamily) private var family
-    let entry: RemindersEntry
-
-    private var limit: Int { family == .systemSmall ? 3 : (family == .systemLarge ? 9 : 5) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Link(destination: URL(string: "orbit://reminders")!) {
-                    Text("REMINDERS").font(.caption.weight(.bold)).tracking(0.8)
+        Group {
+            switch family {
+            case .accessoryCircular:
+                ZStack {
+                    AccessoryWidgetBackground()
+                    Image(systemName: "waveform.and.mic")
+                        .font(.title3.weight(.bold))
+                        .widgetAccentable()
                 }
-                .foregroundStyle(.primary)
-                Spacer()
-                Text("\(entry.reminders.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                Link(destination: URL(string: "orbit://reminders/new")!) {
-                    Image(systemName: "plus.circle.fill")
-                }
-            }
-            .padding(.bottom, 8)
-
-            if entry.reminders.isEmpty {
-                Spacer()
-                Label("No reminders", systemImage: "bell.slash")
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
-            } else {
-                ForEach(entry.reminders.prefix(limit)) { reminder in
-                    HStack(spacing: 7) {
-                        Button(intent: CompleteReminderIntent(reminderID: reminder.id.uuidString)) {
-                            Image(systemName: "circle").font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        Link(destination: URL(string: "orbit://reminders/\(reminder.id.uuidString)")!) {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(reminder.title).font(.caption.weight(.medium)).lineLimit(1)
-                                if family != .systemSmall {
-                                    Text(reminder.fireDate.formatted(date: .abbreviated, time: .shortened))
-                                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                            }
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                .widgetURL(URL(string: "orbit://voice")!)
+            case .accessoryRectangular:
+                HStack(spacing: 8) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Ask Orbit").font(.headline)
+                        Text("Chat or talk live").font(.caption)
                     }
-                    .padding(.vertical, family == .systemLarge ? 5 : 3)
-                    if reminder.id != entry.reminders.prefix(limit).last?.id { Divider().opacity(0.45) }
                 }
-                Spacer(minLength: 0)
+                .widgetURL(URL(string: "orbit://assistant")!)
+            case .systemMedium:
+                mediumAssistant
+            default:
+                smallAssistant
             }
         }
         .containerBackground(.background, for: .widget)
+        .accessibilityLabel("Ask Orbit")
     }
-}
 
-struct OrbitRemindersWidget: Widget {
-    let kind = "OrbitRemindersWidget"
-    var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: RemindersProvider()) { entry in
-            RemindersWidgetView(entry: entry)
+    private var smallAssistant: some View {
+        Link(destination: URL(string: "orbit://assistant")!) {
+            VStack(alignment: .leading, spacing: 9) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.title2.weight(.bold))
+                Text("Ask Orbit")
+                    .font(.title3.weight(.bold))
+                Text("Continue your conversation")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                Label("Open chat", systemImage: "arrow.up.right")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
-        .configurationDisplayName("Orbit Reminders")
-        .description("Upcoming Orbit reminders with quick add and complete actions.")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
-}
 
-private struct VoiceEntry: TimelineEntry {
-    let date: Date
-}
+    private var mediumAssistant: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Image(systemName: "sparkles")
+                    .font(.title2.weight(.bold))
+                Text("Ask Orbit")
+                    .font(.title2.weight(.bold))
+                Text("Pick up your chat or start a hands-free conversation.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-private struct VoiceProvider: TimelineProvider {
-    func placeholder(in context: Context) -> VoiceEntry { VoiceEntry(date: .now) }
-    func getSnapshot(in context: Context, completion: @escaping (VoiceEntry) -> Void) {
-        completion(VoiceEntry(date: .now))
-    }
-    func getTimeline(in context: Context, completion: @escaping (Timeline<VoiceEntry>) -> Void) {
-        completion(Timeline(entries: [VoiceEntry(date: .now)], policy: .never))
-    }
-}
-
-private struct VoiceWidgetView: View {
-    var body: some View {
-        ZStack {
-            AccessoryWidgetBackground()
-            Image(systemName: "mic.fill")
-                .font(.title3.weight(.semibold))
-                .widgetAccentable()
+            VStack(spacing: 10) {
+                assistantLink("Chat", systemImage: "bubble.left.fill", destination: "orbit://assistant")
+                assistantLink("Live", systemImage: "waveform", destination: "orbit://voice")
+            }
+            .frame(width: 105)
         }
-        .containerBackground(for: .widget) { Color.clear }
-        .widgetURL(URL(string: "orbit://voice")!)
-        .accessibilityLabel("Talk to Orbit")
+    }
+
+    private func assistantLink(
+        _ title: String,
+        systemImage: String,
+        destination: String
+    ) -> some View {
+        Link(destination: URL(string: destination)!) {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.bold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(.primary.opacity(0.1), in: Capsule())
+        }
+        .foregroundStyle(.primary)
     }
 }
 
-struct OrbitVoiceWidget: Widget {
+/// Retains the original kind so an installed lock-screen voice widget upgrades
+/// into the richer Ask Orbit widget without needing to be added again.
+struct OrbitAssistantWidget: Widget {
     let kind = "OrbitVoiceWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: VoiceProvider()) { _ in
-            VoiceWidgetView()
+        StaticConfiguration(kind: kind, provider: AssistantProvider()) { _ in
+            AssistantWidgetView()
         }
-        .configurationDisplayName("Talk to Orbit")
-        .description("Open Orbit voice mode.")
-        .supportedFamilies([.accessoryCircular])
+        .configurationDisplayName("Ask Orbit")
+        .description("Open persistent chat or start a live voice conversation.")
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular])
     }
 }
 
@@ -234,7 +318,7 @@ struct OrbitVoiceWidget: Widget {
 struct OrbitTasksWidgetBundle: WidgetBundle {
     var body: some Widget {
         OrbitTasksWidget()
-        OrbitRemindersWidget()
-        OrbitVoiceWidget()
+        OrbitScheduledWidget()
+        OrbitAssistantWidget()
     }
 }

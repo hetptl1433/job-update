@@ -61,6 +61,15 @@ enum AppConfig {
         return value
     }
 
+    /// Speech-to-speech model used by Orbit's continuous live conversation.
+    /// This is separate from the lower-cost text/extraction model above and can
+    /// be overridden without changing source code.
+    static var openAIRealtimeModel: String {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenAIRealtimeModel") as? String,
+              !value.isEmpty else { return "gpt-realtime-2.1" }
+        return value
+    }
+
     /// Minimum iOS shown in Settings/About.
     static let minimumOS = "17.0"
 

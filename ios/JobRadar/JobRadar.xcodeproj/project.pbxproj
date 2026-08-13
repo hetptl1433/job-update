@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		00A2139F9B0792C0EE61C1F1 /* TaskAlertScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5685F558140F0AD9C1B5082 /* TaskAlertScheduler.swift */; };
+		0410E675C9F89B2977505160 /* WatchTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CADD225759473938F1C62DA /* WatchTasksView.swift */; };
 		063C7042816E9CC752F98992 /* IncomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE206F479CD751D793501449 /* IncomeView.swift */; };
 		0A54B14B087712E487BC5324 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A8C891ED8B931275D311E9 /* AppDelegate.swift */; };
 		0FA42EE1425054BF9C253D6B /* HealthRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B679CD1F7C02B81E9E21257A /* HealthRepository.swift */; };
@@ -16,16 +17,22 @@
 		17844158F5A6D935114B4FA0 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A74CE017726AAE3CC62D378 /* MainTabView.swift */; };
 		1A8CDA6C1DD88A9A988EFEA4 /* JobApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 081316B189E1395A742756AA /* JobApplication.swift */; };
 		1ADB01E7E39A0A8E62B6EB8B /* Notifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 317E3DF49749D997F7826E5C /* Notifications.swift */; };
+		21919C73BBEBC1250CC310F5 /* WatchTaskSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F58CBFE7A6F1F21E7C63EF05 /* WatchTaskSync.swift */; };
 		22001DAB50ECE76A7B798C64 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5125E34437F5EB2C491A65EF /* AppConfig.swift */; };
 		232BDA959969FEE792201E7C /* HealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECD9B66ADF909794E6305D8B /* HealthView.swift */; };
 		307FC4B49BAB0D4AA52137C3 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605877B44D14E24E1BDD97C1 /* AppTheme.swift */; };
+		31723BEEC480AE0C86AF9BB2 /* AssistantContextBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C309F9B18CE35E92B9A1A293 /* AssistantContextBuilder.swift */; };
 		32349C8B32DF9AA64ABA0E33 /* AutomationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511D058F3F7ABBF06BBD47B9 /* AutomationService.swift */; };
+		34FDE89DCDCDC8C4135ED0E1 /* OrbitWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4661D1CA98F29632B387DF10 /* OrbitWatchApp.swift */; };
 		3DE00414E07A72E364DE8E3B /* MicrosoftAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA2545E3854B16EC3DEA8FB /* MicrosoftAuthService.swift */; };
 		4378C05AB70D2274DEC6090C /* AIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBF66E3107D8E4735BEC5AA0 /* AIService.swift */; };
 		459BA54C06C8F106D606E512 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D4B77A2C8AE025E53D493F29 /* Assets.xcassets */; };
+		45B6B735C372EEE93AE97A5A /* RealtimeClientSecretProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A003E5C361168415CDA11A84 /* RealtimeClientSecretProvider.swift */; };
 		45D2C0B582A1A3CC42419458 /* AuthenticationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98A12AB7C7A21F5673C47A9B /* AuthenticationManager.swift */; };
 		45FEE3D71293E4ABF6D63D6D /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF1131EEA886B356B138F53D /* TasksView.swift */; };
+		4AC8F04E4D9D5F86E1ADD8E0 /* WatchVoiceSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10EAC59F401CF1E337C7449 /* WatchVoiceSync.swift */; };
 		4B5BEB5715481FCC0F864E7D /* OutlookServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7CD04CCC9045715A19525DE /* OutlookServices.swift */; };
+		5105CD8ABC0A3BCB67D7C936 /* WatchVoiceSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10EAC59F401CF1E337C7449 /* WatchVoiceSync.swift */; };
 		5ADE4127244D6FF9B999D033 /* StateViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37A70448638A7FBACEECB025 /* StateViews.swift */; };
 		5CA37B7B5C23682B2E122933 /* DomainModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E490EDBDD456EADE5AD97457 /* DomainModels.swift */; };
 		673A62ADC76C0058BB8445B1 /* OpenAIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A354BD82F5115F67AB42C83 /* OpenAIClient.swift */; };
@@ -35,14 +42,19 @@
 		70C820C1D7F681B6AF34C7FD /* EmailIntelligence.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA5AD11062490916EAE95A73 /* EmailIntelligence.swift */; };
 		74C1BFA1E863108F507270A2 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = FF5F11301C970028D747DA36 /* GoogleSignIn */; };
 		79E1184541C0E5A652207C9F /* UnifiedEmailModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B705B72FF8F79E5F808FDD8 /* UnifiedEmailModels.swift */; };
+		7E2A5D5BF8A4A9C5A6E65F87 /* OpenAIRealtimeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2460F60F2E9BFB4E156617D5 /* OpenAIRealtimeSession.swift */; };
+		7F6C05253DBC1EA1A0A4BEEC /* OpenAIRealtimeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2460F60F2E9BFB4E156617D5 /* OpenAIRealtimeSession.swift */; };
 		81CAADB84CA34EB7F028B7E9 /* JobsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FF92461C5FFFF7F3BB23880 /* JobsView.swift */; };
 		823931BA3DF810460B341687 /* JobRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 825A4BFF8F6353578479064F /* JobRepository.swift */; };
 		8512DF0E7CB12FDE8A850D5C /* LoadState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E9ED31B39A5F92FB5338746 /* LoadState.swift */; };
+		856A9771534F82087D626F20 /* VoiceFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B3C3E41EBC0220B2D1900CB /* VoiceFeatureTests.swift */; };
 		86429CAB680D9B19445B6A29 /* HealthKitProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84D8FFC5D82468565873A0F6 /* HealthKitProvider.swift */; };
 		86DB444124A80BA9FED908F1 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 375DED7A12243003D97DAB36 /* KeychainStore.swift */; };
 		893FBC79D25BCEAFFE1A8087 /* OrbitAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EDA11F9DA1A71F52E0580C6 /* OrbitAppIntents.swift */; };
+		8F0EB0E1CF36486BB52C3A1F /* OpenAIRealtimeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2460F60F2E9BFB4E156617D5 /* OpenAIRealtimeSession.swift */; };
 		8F6DAA54D60397D1C70E2BB0 /* UserSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 223B53969C9C40906A768130 /* UserSession.swift */; };
 		907DFDB789588829900C9E7C /* AppleCalendarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59328EE64563B306F65DDF2A /* AppleCalendarService.swift */; };
+		993052AC797DE224B7C8FC2A /* WatchTaskSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E33A918CDC8CCA401615F6 /* WatchTaskSyncService.swift */; };
 		9B360E90DF674629B86168DC /* OrbitTasksWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 482585DDB0350316F77C0D40 /* OrbitTasksWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9C1C1ED1F0E0497AF3DC38A2 /* GmailRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8F9A7C96773C4227E89DC95 /* GmailRepository.swift */; };
 		9CFA273CAF5A90E0A546C750 /* ReminderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83E30B2A73AB2B5F21B4C0EA /* ReminderRepository.swift */; };
@@ -55,18 +67,23 @@
 		A6C046F9269DF33CD8E0381E /* CompleteTaskIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02C24B60AE2C3A8BC1A78717 /* CompleteTaskIntent.swift */; };
 		AC72FA5438AEA079D98E26A1 /* GoogleAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D28D2C02977AF00022EBA472 /* GoogleAuthService.swift */; };
 		B0DA9F5F32DDCD3B22A2D4EE /* CompleteReminderIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEEDF6040B85A296E4B02999 /* CompleteReminderIntent.swift */; };
+		B3FE91EB43011F63B968691C /* WatchTaskStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07E6B2E1062D708BF521B592 /* WatchTaskStore.swift */; };
 		B434BBA30DBE90A56FE45ADF /* GmailAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F1A036D5B707AE674B293FD /* GmailAPIClient.swift */; };
+		B4542E688A2725CC0CD9C836 /* WatchVoiceSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10EAC59F401CF1E337C7449 /* WatchVoiceSync.swift */; };
 		B54A14AA9FA6700F5FD0F643 /* TaskShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2DE41BF9A76EFDD5DFF87DE /* TaskShared.swift */; };
 		BB02357680991FDA0A0A04D6 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E828B0E48D19E2D0EB7637AD /* SettingsView.swift */; };
 		BBB2E51451BE60D68A526F5E /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7D5E6100301DF890FDDC22 /* APIClient.swift */; };
 		BBC8E26BD67B890A9A9B7DD8 /* AutomationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A789E8AAFF646539E42F8A2 /* AutomationsView.swift */; };
 		BECC2A29A8F8645D2E5F5EAF /* TaskShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2DE41BF9A76EFDD5DFF87DE /* TaskShared.swift */; };
+		C41A5D3E249109C0BD89B6E1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D4B77A2C8AE025E53D493F29 /* Assets.xcassets */; };
 		C8B2455D1A8245087E676F55 /* FinanceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6D3BD814E6282106B4501F3 /* FinanceModels.swift */; };
 		CC83A21919DB9E7E9CACEC09 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C92CD2B8640D66E3CBCC82 /* HomeView.swift */; };
 		CE1444C6FA85710E61AA0A45 /* MockData.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA64D209496530B835D58DE0 /* MockData.swift */; };
 		CEFDD22DD4CE2E3154D9724F /* SetupServicesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F5A74836316A15C71893550 /* SetupServicesView.swift */; };
 		CF134F2E07B87AA233FAFE67 /* JobRadarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB723C09D31590A2318455B /* JobRadarApp.swift */; };
+		D32EDF33A14FEE55C2FC7401 /* OrbitWatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = F882F5036BC1EEEBDF12AB42 /* OrbitWatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D7AA3F39C0EAB56A9252F605 /* FinanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A2E91F3E01F71EB2333A6DE /* FinanceView.swift */; };
+		DA0B396384F875DED5362BD4 /* WatchTaskSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F58CBFE7A6F1F21E7C63EF05 /* WatchTaskSync.swift */; };
 		DACD360471F39A1B1D38E4FB /* AssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFAC6C4A0CFBF7AAF27CD01 /* AssistantView.swift */; };
 		DC424EBE331CACFB7A779EBE /* MSAL in Frameworks */ = {isa = PBXBuildFile; productRef = 4BA8291384B92F40E6F5B8EA /* MSAL */; };
 		E458521BE54941826781C4EC /* CalendarRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA0DE43A2334E6C3B537B310 /* CalendarRepository.swift */; };
@@ -74,6 +91,7 @@
 		EF38863BEED5B56BBB2ACE6E /* CompleteReminderIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEEDF6040B85A296E4B02999 /* CompleteReminderIntent.swift */; };
 		F2D273D0E80250C0CD055A79 /* GoogleCalendarAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4120879E57055EA65484B9 /* GoogleCalendarAPIClient.swift */; };
 		F4817B665273A489299E4C6D /* InboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4174A98006638BAEFA70EDC /* InboxView.swift */; };
+		FABE4A082F1034A3C64583E4 /* WatchTaskSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F58CBFE7A6F1F21E7C63EF05 /* WatchTaskSync.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -91,9 +109,27 @@
 			remoteGlobalIDString = 9005D2F93B3B99CC91A0E2B1;
 			remoteInfo = JobRadar;
 		};
+		19EA529534338418BD130EC8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7FA7DD4823E985C9F95A1F0C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 62DF076E9D8E8CD291E700E9;
+			remoteInfo = OrbitWatchApp;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		51E9D49EA8F160A96BCD3266 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				D32EDF33A14FEE55C2FC7401 /* OrbitWatchApp.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		77AF1597FC6CEC807C13C2B7 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -109,14 +145,19 @@
 
 /* Begin PBXFileReference section */
 		02C24B60AE2C3A8BC1A78717 /* CompleteTaskIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompleteTaskIntent.swift; sourceTree = "<group>"; };
+		07E6B2E1062D708BF521B592 /* WatchTaskStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTaskStore.swift; sourceTree = "<group>"; };
 		081316B189E1395A742756AA /* JobApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobApplication.swift; sourceTree = "<group>"; };
 		09D2203241477E45D5C4A7F8 /* VoiceAssistantAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAssistantAudio.swift; sourceTree = "<group>"; };
+		0B3C3E41EBC0220B2D1900CB /* VoiceFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceFeatureTests.swift; sourceTree = "<group>"; };
 		0B705B72FF8F79E5F808FDD8 /* UnifiedEmailModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedEmailModels.swift; sourceTree = "<group>"; };
+		0CADD225759473938F1C62DA /* WatchTasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTasksView.swift; sourceTree = "<group>"; };
 		101BA336A7E6F9D9F6BBBF4A /* IncomeModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomeModelsTests.swift; sourceTree = "<group>"; };
 		12FE95822077E986CB0DB230 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		1CD217C7F45C37350D0D0993 /* PreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSupport.swift; sourceTree = "<group>"; };
 		1F5A74836316A15C71893550 /* SetupServicesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupServicesView.swift; sourceTree = "<group>"; };
 		223B53969C9C40906A768130 /* UserSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSession.swift; sourceTree = "<group>"; };
+		2460F60F2E9BFB4E156617D5 /* OpenAIRealtimeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIRealtimeSession.swift; sourceTree = "<group>"; };
+		24E33A918CDC8CCA401615F6 /* WatchTaskSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTaskSyncService.swift; sourceTree = "<group>"; };
 		2E9ED31B39A5F92FB5338746 /* LoadState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadState.swift; sourceTree = "<group>"; };
 		2EDA11F9DA1A71F52E0580C6 /* OrbitAppIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbitAppIntents.swift; sourceTree = "<group>"; };
 		2F1A036D5B707AE674B293FD /* GmailAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GmailAPIClient.swift; sourceTree = "<group>"; };
@@ -126,10 +167,12 @@
 		3CE1F9303FEFE5B2C4C02E12 /* OrbitTasksWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbitTasksWidget.swift; sourceTree = "<group>"; };
 		3DA2545E3854B16EC3DEA8FB /* MicrosoftAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrosoftAuthService.swift; sourceTree = "<group>"; };
 		3FF92461C5FFFF7F3BB23880 /* JobsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobsView.swift; sourceTree = "<group>"; };
+		4661D1CA98F29632B387DF10 /* OrbitWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbitWatchApp.swift; sourceTree = "<group>"; };
 		482585DDB0350316F77C0D40 /* OrbitTasksWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OrbitTasksWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EE857CFC8FF53BB99E83840 /* OrbitTasksWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OrbitTasksWidget.entitlements; sourceTree = "<group>"; };
 		511D058F3F7ABBF06BBD47B9 /* AutomationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationService.swift; sourceTree = "<group>"; };
 		5125E34437F5EB2C491A65EF /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		52B66373588EF0E000EB8E4F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		59328EE64563B306F65DDF2A /* AppleCalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCalendarService.swift; sourceTree = "<group>"; };
 		5A354BD82F5115F67AB42C83 /* OpenAIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIClient.swift; sourceTree = "<group>"; };
 		605877B44D14E24E1BDD97C1 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
@@ -148,6 +191,7 @@
 		9D61703E02BC806EF8E7ABB2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9E1773AC47E7872B50A91F32 /* IncomeCalculatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomeCalculatorView.swift; sourceTree = "<group>"; };
 		9FC343A20B40D82C59F783A8 /* TaskRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRepository.swift; sourceTree = "<group>"; };
+		A003E5C361168415CDA11A84 /* RealtimeClientSecretProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeClientSecretProvider.swift; sourceTree = "<group>"; };
 		A149CC4FEE24F218065193DC /* JobRadarTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = JobRadarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA64D209496530B835D58DE0 /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
 		ACDE3B61367785DDDEF1C81A /* JobRadar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JobRadar.entitlements; sourceTree = "<group>"; };
@@ -157,6 +201,7 @@
 		B679CD1F7C02B81E9E21257A /* HealthRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthRepository.swift; sourceTree = "<group>"; };
 		B6D3BD814E6282106B4501F3 /* FinanceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceModels.swift; sourceTree = "<group>"; };
 		BA5AD11062490916EAE95A73 /* EmailIntelligence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailIntelligence.swift; sourceTree = "<group>"; };
+		C309F9B18CE35E92B9A1A293 /* AssistantContextBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantContextBuilder.swift; sourceTree = "<group>"; };
 		C4174A98006638BAEFA70EDC /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
 		C70364CB80048866885CF626 /* IncomeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomeModels.swift; sourceTree = "<group>"; };
 		C7CD04CCC9045715A19525DE /* OutlookServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlookServices.swift; sourceTree = "<group>"; };
@@ -168,6 +213,7 @@
 		DA0DE43A2334E6C3B537B310 /* CalendarRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarRepository.swift; sourceTree = "<group>"; };
 		DE206F479CD751D793501449 /* IncomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomeView.swift; sourceTree = "<group>"; };
 		DEEDF6040B85A296E4B02999 /* CompleteReminderIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompleteReminderIntent.swift; sourceTree = "<group>"; };
+		E10EAC59F401CF1E337C7449 /* WatchVoiceSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchVoiceSync.swift; sourceTree = "<group>"; };
 		E490EDBDD456EADE5AD97457 /* DomainModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainModels.swift; sourceTree = "<group>"; };
 		E522CD746A20A5BC8A8578A1 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		E5C1C4C959CBEDB3454D8549 /* JobRadar.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = JobRadar.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -176,6 +222,8 @@
 		ECD9B66ADF909794E6305D8B /* HealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthView.swift; sourceTree = "<group>"; };
 		ECFAC6C4A0CFBF7AAF27CD01 /* AssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantView.swift; sourceTree = "<group>"; };
 		EF1131EEA886B356B138F53D /* TasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksView.swift; sourceTree = "<group>"; };
+		F58CBFE7A6F1F21E7C63EF05 /* WatchTaskSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTaskSync.swift; sourceTree = "<group>"; };
+		F882F5036BC1EEEBDF12AB42 /* OrbitWatchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OrbitWatchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -196,9 +244,23 @@
 			children = (
 				DEEDF6040B85A296E4B02999 /* CompleteReminderIntent.swift */,
 				02C24B60AE2C3A8BC1A78717 /* CompleteTaskIntent.swift */,
+				2460F60F2E9BFB4E156617D5 /* OpenAIRealtimeSession.swift */,
 				B2DE41BF9A76EFDD5DFF87DE /* TaskShared.swift */,
+				F58CBFE7A6F1F21E7C63EF05 /* WatchTaskSync.swift */,
+				E10EAC59F401CF1E337C7449 /* WatchVoiceSync.swift */,
 			);
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		1AE7723E3F75833D900B6CF4 /* OrbitWatchApp */ = {
+			isa = PBXGroup;
+			children = (
+				52B66373588EF0E000EB8E4F /* Info.plist */,
+				4661D1CA98F29632B387DF10 /* OrbitWatchApp.swift */,
+				07E6B2E1062D708BF521B592 /* WatchTaskStore.swift */,
+				0CADD225759473938F1C62DA /* WatchTasksView.swift */,
+			);
+			path = OrbitWatchApp;
 			sourceTree = "<group>";
 		};
 		217D2714FB13BA80190E9565 /* Home */ = {
@@ -213,14 +275,17 @@
 			isa = PBXGroup;
 			children = (
 				CBF66E3107D8E4735BEC5AA0 /* AIService.swift */,
+				C309F9B18CE35E92B9A1A293 /* AssistantContextBuilder.swift */,
 				511D058F3F7ABBF06BBD47B9 /* AutomationService.swift */,
 				BA5AD11062490916EAE95A73 /* EmailIntelligence.swift */,
 				2E9ED31B39A5F92FB5338746 /* LoadState.swift */,
 				317E3DF49749D997F7826E5C /* Notifications.swift */,
 				5A354BD82F5115F67AB42C83 /* OpenAIClient.swift */,
 				2EDA11F9DA1A71F52E0580C6 /* OrbitAppIntents.swift */,
+				A003E5C361168415CDA11A84 /* RealtimeClientSecretProvider.swift */,
 				B5685F558140F0AD9C1B5082 /* TaskAlertScheduler.swift */,
 				09D2203241477E45D5C4A7F8 /* VoiceAssistantAudio.swift */,
+				24E33A918CDC8CCA401615F6 /* WatchTaskSyncService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -231,6 +296,7 @@
 				E5C1C4C959CBEDB3454D8549 /* JobRadar.app */,
 				A149CC4FEE24F218065193DC /* JobRadarTests.xctest */,
 				482585DDB0350316F77C0D40 /* OrbitTasksWidget.appex */,
+				F882F5036BC1EEEBDF12AB42 /* OrbitWatchApp.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -247,6 +313,7 @@
 			isa = PBXGroup;
 			children = (
 				101BA336A7E6F9D9F6BBBF4A /* IncomeModelsTests.swift */,
+				0B3C3E41EBC0220B2D1900CB /* VoiceFeatureTests.swift */,
 			);
 			path = JobRadarTests;
 			sourceTree = "<group>";
@@ -377,6 +444,7 @@
 				594384611F265A89EC23FEA4 /* JobRadar */,
 				494C8AA7263FA84DFB272CAE /* JobRadarTests */,
 				EFEB57876656BCADC69A970C /* OrbitTasksWidget */,
+				1AE7723E3F75833D900B6CF4 /* OrbitWatchApp */,
 				079443DD26ED3E4BF35EFB89 /* Shared */,
 				2AF73A4890F4DE996AB95575 /* Products */,
 			);
@@ -492,6 +560,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		62DF076E9D8E8CD291E700E9 /* OrbitWatchApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 858521B2AE90848720DF54AB /* Build configuration list for PBXNativeTarget "OrbitWatchApp" */;
+			buildPhases = (
+				885F1EA2A71D079F26D6A58E /* Sources */,
+				CCB478BA4F24F2EA3DE4B9BE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OrbitWatchApp;
+			packageProductDependencies = (
+			);
+			productName = OrbitWatchApp;
+			productReference = F882F5036BC1EEEBDF12AB42 /* OrbitWatchApp.app */;
+			productType = "com.apple.product-type.application";
+		};
 		9005D2F93B3B99CC91A0E2B1 /* JobRadar */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = C9ED05CE953D50013B817B0E /* Build configuration list for PBXNativeTarget "JobRadar" */;
@@ -500,11 +586,13 @@
 				CBEDEBE94E9FBFE7763C20FB /* Resources */,
 				F2F7270A6AF1CBF0B65721E1 /* Frameworks */,
 				77AF1597FC6CEC807C13C2B7 /* Embed Foundation Extensions */,
+				51E9D49EA8F160A96BCD3266 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				E146BB5640F007BCF5E3DF7D /* PBXTargetDependency */,
+				E24D4F1933DC7D547EDEA0CE /* PBXTargetDependency */,
 			);
 			name = JobRadar;
 			packageProductDependencies = (
@@ -559,6 +647,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					62DF076E9D8E8CD291E700E9 = {
+						DevelopmentTeam = VN6463GX9K;
+						ProvisioningStyle = Automatic;
+					};
 					9005D2F93B3B99CC91A0E2B1 = {
 						DevelopmentTeam = VN6463GX9K;
 						ProvisioningStyle = Automatic;
@@ -589,6 +681,7 @@
 			targets = (
 				9005D2F93B3B99CC91A0E2B1 /* JobRadar */,
 				DE4156179A24898D4581C93D /* OrbitTasksWidget */,
+				62DF076E9D8E8CD291E700E9 /* OrbitWatchApp */,
 				DD1C28B7ABB860DD7281CCE1 /* JobRadarTests */,
 			);
 		};
@@ -603,14 +696,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CCB478BA4F24F2EA3DE4B9BE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C41A5D3E249109C0BD89B6E1 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		885F1EA2A71D079F26D6A58E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7F6C05253DBC1EA1A0A4BEEC /* OpenAIRealtimeSession.swift in Sources */,
+				34FDE89DCDCDC8C4135ED0E1 /* OrbitWatchApp.swift in Sources */,
+				B3FE91EB43011F63B968691C /* WatchTaskStore.swift in Sources */,
+				DA0B396384F875DED5362BD4 /* WatchTaskSync.swift in Sources */,
+				0410E675C9F89B2977505160 /* WatchTasksView.swift in Sources */,
+				B4542E688A2725CC0CD9C836 /* WatchVoiceSync.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BA36D9BA52A127A4C86C5D9C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				704D0A9D21814FB283C0FD48 /* IncomeModelsTests.swift in Sources */,
+				856A9771534F82087D626F20 /* VoiceFeatureTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -620,8 +735,11 @@
 			files = (
 				B0DA9F5F32DDCD3B22A2D4EE /* CompleteReminderIntent.swift in Sources */,
 				A6C046F9269DF33CD8E0381E /* CompleteTaskIntent.swift in Sources */,
+				7E2A5D5BF8A4A9C5A6E65F87 /* OpenAIRealtimeSession.swift in Sources */,
 				A414066314D959E665988E0B /* OrbitTasksWidget.swift in Sources */,
 				B54A14AA9FA6700F5FD0F643 /* TaskShared.swift in Sources */,
+				FABE4A082F1034A3C64583E4 /* WatchTaskSync.swift in Sources */,
+				5105CD8ABC0A3BCB67D7C936 /* WatchVoiceSync.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -636,6 +754,7 @@
 				E53B4979A689F0CC687AEEAD /* AppState.swift in Sources */,
 				307FC4B49BAB0D4AA52137C3 /* AppTheme.swift in Sources */,
 				907DFDB789588829900C9E7C /* AppleCalendarService.swift in Sources */,
+				31723BEEC480AE0C86AF9BB2 /* AssistantContextBuilder.swift in Sources */,
 				DACD360471F39A1B1D38E4FB /* AssistantView.swift in Sources */,
 				45D2C0B582A1A3CC42419458 /* AuthenticationManager.swift in Sources */,
 				32349C8B32DF9AA64ABA0E33 /* AutomationService.swift in Sources */,
@@ -671,9 +790,11 @@
 				CE1444C6FA85710E61AA0A45 /* MockData.swift in Sources */,
 				1ADB01E7E39A0A8E62B6EB8B /* Notifications.swift in Sources */,
 				673A62ADC76C0058BB8445B1 /* OpenAIClient.swift in Sources */,
+				8F0EB0E1CF36486BB52C3A1F /* OpenAIRealtimeSession.swift in Sources */,
 				893FBC79D25BCEAFFE1A8087 /* OrbitAppIntents.swift in Sources */,
 				4B5BEB5715481FCC0F864E7D /* OutlookServices.swift in Sources */,
 				A0404158FAA5A83B1C90B809 /* PreviewSupport.swift in Sources */,
+				45B6B735C372EEE93AE97A5A /* RealtimeClientSecretProvider.swift in Sources */,
 				9CFA273CAF5A90E0A546C750 /* ReminderRepository.swift in Sources */,
 				A6A027D89FD93E6AAD9540D1 /* RootView.swift in Sources */,
 				BB02357680991FDA0A0A04D6 /* SettingsView.swift in Sources */,
@@ -686,6 +807,9 @@
 				79E1184541C0E5A652207C9F /* UnifiedEmailModels.swift in Sources */,
 				8F6DAA54D60397D1C70E2BB0 /* UserSession.swift in Sources */,
 				A006E36266F2442D3F47B09E /* VoiceAssistantAudio.swift in Sources */,
+				21919C73BBEBC1250CC310F5 /* WatchTaskSync.swift in Sources */,
+				993052AC797DE224B7C8FC2A /* WatchTaskSyncService.swift in Sources */,
+				4AC8F04E4D9D5F86E1ADD8E0 /* WatchVoiceSync.swift in Sources */,
 				162186FCDDD8C1963AA7E44A /* WelcomeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -702,6 +826,11 @@
 			isa = PBXTargetDependency;
 			target = DE4156179A24898D4581C93D /* OrbitTasksWidget */;
 			targetProxy = 06657B2A9F6DEE5051D0BEDD /* PBXContainerItemProxy */;
+		};
+		E24D4F1933DC7D547EDEA0CE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 62DF076E9D8E8CD291E700E9 /* OrbitWatchApp */;
+			targetProxy = 19EA529534338418BD130EC8 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -799,10 +928,10 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.10;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
 			};
 			name = Release;
 		};
@@ -841,6 +970,21 @@
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		43EC9313F8D6921C6F5F532B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = VN6463GX9K;
+				INFOPLIST_FILE = OrbitWatchApp/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hetpatel.jobradar.watchkitapp;
+				PRODUCT_NAME = OrbitWatchApp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
 			};
 			name = Release;
 		};
@@ -940,10 +1084,25 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.10;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		C3F084EAEB9056099A750624 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = VN6463GX9K;
+				INFOPLIST_FILE = OrbitWatchApp/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hetpatel.jobradar.watchkitapp;
+				PRODUCT_NAME = OrbitWatchApp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
 			};
 			name = Debug;
 		};
@@ -964,6 +1123,15 @@
 			buildConfigurations = (
 				C283AC1F8C182D8C44EBB765 /* Debug */,
 				1939C4E153F53E56BFAB855C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		858521B2AE90848720DF54AB /* Build configuration list for PBXNativeTarget "OrbitWatchApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C3F084EAEB9056099A750624 /* Debug */,
+				43EC9313F8D6921C6F5F532B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

@@ -421,6 +421,333 @@ final class IncomeWireModelTests: XCTestCase {
     }
 }
 
+final class FinanceOverviewWireModelTests: XCTestCase {
+    func testOlderBackendOverviewStillDecodesWithoutInsightFields() throws {
+        let json = #"""
+        {
+          "institutions": [],
+          "accounts": [],
+          "recentTransactions": [],
+          "monthlyInflow": 2000,
+          "monthlyOutflow": 900,
+          "totalCash": 5000,
+          "totalCreditBalance": 250,
+          "totalInvestments": 1000,
+          "currencyCode": "USD",
+          "lastUpdatedAt": "2026-08-11T12:00:00Z"
+        }
+        """#
+
+        let overview = try JSONDecoder().decode(FinanceOverview.self, from: Data(json.utf8))
+
+        XCTAssertEqual(overview.detectedRecurringPayments, [])
+        XCTAssertEqual(overview.detectedMonthlyRecurringTotal, 0)
+        XCTAssertEqual(overview.topSpendingCategories, [])
+    }
+
+    func testRecurringAndSpendingInsightsDecodeFromBackendContract() throws {
+        let json = #"""
+        {
+          "institutions": [],
+          "accounts": [],
+          "recentTransactions": [],
+          "monthlyInflow": 2000,
+          "monthlyOutflow": 900,
+          "totalCash": 5000,
+          "totalCreditBalance": 250,
+          "totalInvestments": 1000,
+          "recurringPayments": [{
+            "id": "subscription-1",
+            "name": "Streamflix",
+            "category": "Entertainment",
+            "amount": 15.99,
+            "monthlyAmount": 15.99,
+            "currencyCode": "USD",
+            "cadence": "monthly",
+            "lastChargeDate": "2026-08-05",
+            "nextExpectedDate": "2026-09-05",
+            "occurrences": 5,
+            "isVariable": false,
+            "confidence": 0.96
+          }],
+          "monthlyRecurringTotal": 15.99,
+          "spendingByCategory": [{
+            "id": "rent-and-utilities",
+            "name": "Rent And Utilities",
+            "amount": 700,
+            "share": 0.7778
+          }],
+          "currencyCode": "USD",
+          "lastUpdatedAt": "2026-08-11T12:00:00Z"
+        }
+        """#
+
+        let overview = try JSONDecoder().decode(FinanceOverview.self, from: Data(json.utf8))
+
+        XCTAssertEqual(overview.detectedRecurringPayments.first?.cadence, .monthly)
+        XCTAssertEqual(overview.detectedRecurringPayments.first?.nextExpectedDate, "2026-09-05")
+        XCTAssertEqual(overview.detectedMonthlyRecurringTotal, 15.99)
+        XCTAssertEqual(overview.topSpendingCategories.first?.amount, 700)
+    }
+
+    func testUnknownRecurringCadenceFallsBackWithoutBreakingFinance() throws {
+        XCTAssertEqual(
+            try JSONDecoder().decode(FinanceRecurringCadence.self, from: jsonString("semimonthly")),
+            .irregular
+        )
+    }
+}
+
+final class FinanceInstitutionPresentationTests: XCTestCase {
+    func testCommonInstitutionNameVariantsResolveToNativeBrandMarks() {
+        XCTAssertEqual(FinanceInstitutionBrand(institutionName: "JPMorgan Chase Bank"), .chase)
+        XCTAssertEqual(FinanceInstitutionBrand(institutionName: "AMEX Personal Savings"), .americanExpress)
+        XCTAssertEqual(FinanceInstitutionBrand(institutionName: "Discover Card"), .discover)
+        XCTAssertEqual(FinanceInstitutionBrand(institutionName: "Bank of America"), .bankOfAmerica)
+        XCTAssertEqual(FinanceInstitutionBrand(institutionName: "Capital One 360"), .capitalOne)
+        XCTAssertEqual(FinanceInstitutionBrand(institutionName: "Fifth Third Bank"), .fifthThird)
+        XCTAssertEqual(FinanceInstitutionBrand(institutionName: "A Local Credit Union"), .generic)
+    }
+
+    func testAccountKindsStayInSeparateBankCardAndOtherGroups() {
+        XCTAssertEqual(account(id: "checking", itemID: "item", kind: .checking).group, .bank)
+        XCTAssertEqual(account(id: "savings", itemID: "item", kind: .savings).group, .bank)
+        XCTAssertEqual(account(id: "card", itemID: "item", kind: .creditCard).group, .creditCards)
+        XCTAssertEqual(account(id: "investment", itemID: "item", kind: .investment).group, .other)
+        XCTAssertEqual(account(id: "loan", itemID: "item", kind: .loan).group, .other)
+    }
+
+    func testInstitutionDetailUsesItemIDAndOnlyItsAccountTransactions() {
+        let chase = FinanceInstitution(id: "item-chase", name: "Chase", accountCount: 2, needsAttention: false)
+        let amex = FinanceInstitution(id: "item-amex", name: "American Express", accountCount: 1, needsAttention: false)
+        let chaseChecking = account(id: "chase-checking", itemID: chase.id, institution: "Chase", kind: .checking)
+        let chaseCard = account(id: "chase-card", itemID: chase.id, institution: "Chase", kind: .creditCard)
+        let amexCard = account(id: "amex-card", itemID: amex.id, institution: "American Express", kind: .creditCard)
+        let overview = overview(
+            institutions: [chase, amex],
+            accounts: [chaseChecking, chaseCard, amexCard],
+            transactions: [
+                transaction(id: "chase-transaction", accountID: chaseChecking.id),
+                transaction(id: "amex-transaction", accountID: amexCard.id)
+            ]
+        )
+
+        XCTAssertEqual(Set(overview.accounts(for: chase).map(\.id)), ["chase-checking", "chase-card"])
+        XCTAssertEqual(overview.transactions(for: chase).map(\.id), ["chase-transaction"])
+        XCTAssertEqual(overview.institution(for: amexCard), amex)
+    }
+
+    func testLegacyCachedAccountCanFallBackToInstitutionBrandName() {
+        let amex = FinanceInstitution(
+            id: "new-item-id",
+            name: "American Express",
+            accountCount: 1,
+            needsAttention: false
+        )
+        let cachedAccount = account(
+            id: "legacy-account",
+            itemID: "legacy-item-id",
+            institution: "AMEX Personal Savings",
+            kind: .savings
+        )
+        let overview = overview(institutions: [amex], accounts: [cachedAccount], transactions: [])
+
+        XCTAssertEqual(overview.accounts(for: amex).map(\.id), [cachedAccount.id])
+        XCTAssertEqual(overview.institution(for: cachedAccount), amex)
+    }
+
+    private func account(
+        id: String,
+        itemID: String,
+        institution: String = "Test Bank",
+        kind: FinanceAccountKind
+    ) -> FinanceAccount {
+        FinanceAccount(
+            id: id,
+            itemID: itemID,
+            institutionName: institution,
+            name: kind.label,
+            officialName: nil,
+            mask: "1234",
+            kind: kind,
+            subtype: nil,
+            currentBalance: 100,
+            availableBalance: 90,
+            currencyCode: "USD",
+            liability: nil
+        )
+    }
+
+    private func transaction(id: String, accountID: String) -> FinanceTransaction {
+        FinanceTransaction(
+            id: id,
+            accountID: accountID,
+            date: "2026-08-11",
+            name: "Transaction",
+            merchantName: nil,
+            category: "Test",
+            amount: 10,
+            direction: .outflow,
+            pending: false,
+            currencyCode: "USD"
+        )
+    }
+
+    private func overview(
+        institutions: [FinanceInstitution],
+        accounts: [FinanceAccount],
+        transactions: [FinanceTransaction]
+    ) -> FinanceOverview {
+        FinanceOverview(
+            institutions: institutions,
+            accounts: accounts,
+            recentTransactions: transactions,
+            monthlyInflow: 0,
+            monthlyOutflow: 0,
+            totalCash: 0,
+            totalCreditBalance: 0,
+            totalInvestments: 0,
+            recurringPayments: nil,
+            monthlyRecurringTotal: nil,
+            spendingByCategory: nil,
+            currencyCode: "USD",
+            lastUpdatedAt: nil
+        )
+    }
+}
+
+final class ProtectedSnapshotStoreTests: XCTestCase {
+    private struct Fixture: Codable, Equatable {
+        var value: String
+    }
+
+    func testSnapshotIsOwnerScopedAndRemovable() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("orbit-snapshot-tests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProtectedSnapshotStore<Fixture>(filename: "fixture.json", directory: directory)
+
+        store.save(Fixture(value: "cached"), ownerID: "owner-a")
+
+        XCTAssertEqual(store.load(ownerID: "owner-a")?.value, Fixture(value: "cached"))
+        XCTAssertNil(store.load(ownerID: "owner-b"))
+        store.remove()
+        XCTAssertNil(store.load(ownerID: "owner-a"))
+    }
+
+    func testInboxMessageCanRoundTripThroughProtectedCachePayload() throws {
+        let message = InboxMessage(
+            id: "message-1",
+            provider: .gmail,
+            accountID: "gmail-1",
+            accountEmail: "person@example.com",
+            senderName: "Recruiter",
+            senderEmail: "recruiter@example.com",
+            subject: "Interview",
+            aiSummary: "Choose an interview time.",
+            receivedAt: Date(timeIntervalSince1970: 1_786_435_200),
+            importance: .high,
+            actionRequired: true,
+            section: .needsAction
+        )
+
+        let decoded = try JSONDecoder().decode(
+            InboxMessage.self,
+            from: JSONEncoder().encode(message)
+        )
+
+        XCTAssertEqual(decoded, message)
+    }
+}
+
+final class UnifiedToDoMigrationTests: XCTestCase {
+    func testLegacyReminderBecomesScheduledToDoWithoutLosingLinks() {
+        let id = UUID()
+        let fireDate = Date(timeIntervalSince1970: 1_786_438_800)
+        let reminder = ReminderItem(
+            id: id,
+            title: "Call recruiter",
+            notes: "Ask about next steps",
+            fireDate: fireDate,
+            isCompleted: false,
+            createdAt: fireDate.addingTimeInterval(-3_600),
+            updatedAt: fireDate,
+            relatedCalendarEventID: "apple:event-1",
+            alertStyle: .notification
+        )
+
+        let result = SharedTaskStore.merging([], with: [reminder])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].id, id)
+        XCTAssertEqual(result[0].title, "Call recruiter")
+        XCTAssertEqual(result[0].notes, "Ask about next steps")
+        XCTAssertEqual(result[0].dueDate, fireDate)
+        XCTAssertEqual(result[0].appleCalendarEventID, "apple:event-1")
+        XCTAssertEqual(result[0].effectiveAlertStyle, .notification)
+    }
+
+    func testExistingToDoWinsMigrationIDCollision() {
+        let id = UUID()
+        let task = TaskItem(id: id, title: "Current To Do")
+        let reminder = ReminderItem(id: id, title: "Legacy Reminder")
+
+        let result = SharedTaskStore.merging([task], with: [reminder])
+
+        XCTAssertEqual(result, [task])
+    }
+}
+
+final class AssistantConversationModelTests: XCTestCase {
+    func testChatMessageHistoryRoundTripsForPersistentConversation() throws {
+        let messages = [
+            ChatMessage(role: .user, text: "What should I do today?"),
+            ChatMessage(role: .assistant, text: "Start with your interview follow-up.")
+        ]
+
+        let data = try JSONEncoder().encode(messages)
+        let decoded = try JSONDecoder().decode([ChatMessage].self, from: data)
+
+        XCTAssertEqual(decoded, messages)
+    }
+}
+
+final class WatchTaskSyncProtocolTests: XCTestCase {
+    func testSnapshotRoundTripsWithTaskDetails() throws {
+        let task = WatchTaskSnapshotItem(
+            id: UUID(),
+            title: "Call recruiter",
+            notes: "Ask about next steps",
+            dueDate: Date(timeIntervalSince1970: 1_786_438_800),
+            priority: .high,
+            updatedAt: Date(timeIntervalSince1970: 1_786_435_200)
+        )
+        let snapshot = WatchTaskSnapshot(
+            generatedAt: Date(timeIntervalSince1970: 1_786_435_300),
+            tasks: [task]
+        )
+
+        let context = try WatchTaskSyncProtocol.context(for: snapshot)
+
+        XCTAssertEqual(WatchTaskSyncProtocol.snapshot(from: context), snapshot)
+    }
+
+    func testCompletionMessageRequiresAnExplicitCompletedValue() {
+        let id = UUID()
+
+        XCTAssertEqual(
+            WatchTaskSyncProtocol.completedTaskID(
+                from: WatchTaskSyncProtocol.completionMessage(taskID: id)
+            ),
+            id
+        )
+        XCTAssertNil(WatchTaskSyncProtocol.completedTaskID(from: [
+            WatchTaskSyncProtocol.completedTaskIDKey: id.uuidString,
+            WatchTaskSyncProtocol.completedValueKey: false
+        ]))
+    }
+}
+
 private func decimal(_ value: String) -> Decimal {
     guard let value = Decimal(string: value, locale: Locale(identifier: "en_US_POSIX")) else {
         XCTFail("Invalid test decimal: \(value)")

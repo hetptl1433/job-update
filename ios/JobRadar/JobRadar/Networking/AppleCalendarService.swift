@@ -16,7 +16,7 @@ enum AppleCalendarError: LocalizedError {
 }
 
 /// EventKit adapter. Provider events are normalized for reading. Orbit only
-/// changes events it created for a timed To Do or Reminder, identified by a
+/// changes events it created for a timed To Do, identified by a
 /// stored EventKit identifier and an Orbit marker in the event notes.
 @MainActor
 final class AppleCalendarService: CalendarProviderService {
@@ -61,8 +61,7 @@ final class AppleCalendarService: CalendarProviderService {
         .sorted { $0.start < $1.start }
     }
 
-    /// Creates or updates the single Apple Calendar event linked to an Orbit
-    /// reminder. Tasks never call this API.
+    /// Legacy Reminder adapter retained while existing data migrates to To Do.
     func synchronize(_ reminder: ReminderItem) throws -> String? {
         try requireFullAccess()
         if reminder.isCompleted {
@@ -228,6 +227,8 @@ final class AppleCalendarService: CalendarProviderService {
     private func cleanedTaskNotes(_ value: String) -> String {
         value
             .replacingOccurrences(of: #"\n*Orbit task ID: [0-9A-Fa-f-]+\s*$"#,
+                                  with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\n*Orbit reminder ID: [0-9A-Fa-f-]+\s*$"#,
                                   with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

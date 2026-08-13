@@ -93,6 +93,15 @@ final class JobRepository: ObservableObject {
         }
     }
 
+    /// A read-only local snapshot for assistant context outside a SwiftUI
+    /// `@Query` (for example, when Apple Watch requests a voice session).
+    func allApplications() -> [JobApplication] {
+        let descriptor = FetchDescriptor<JobApplication>(
+            sortBy: [SortDescriptor(\JobApplication.updatedAt, order: .reverse)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
     private func upsert(_ remote: [JobApplicationDTO]) throws {
         let local = try context.fetch(FetchDescriptor<JobApplication>())
         let byID = Dictionary(local.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

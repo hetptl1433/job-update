@@ -1,6 +1,15 @@
 import SwiftData
 import SwiftUI
 
+extension RealtimeTurnRole {
+    var chatRole: ChatMessage.Role {
+        switch self {
+        case .user: .user
+        case .assistant: .assistant
+        }
+    }
+}
+
 /// A personal-data assistant. It reasons over the user's jobs, inbox, calendar
 /// and connections via the connected ChatGPT (OpenAI) — not a generic chatbot.
 /// The request is a prompt plus a compact, structured context; the app holds no
@@ -15,9 +24,9 @@ struct AssistantView: View {
     @State private var input: String
     @State private var sending = false
     @State private var showConnect = false
-    @State private var voiceModeActive = false
     @State private var didAutoStartVoice = false
-    @StateObject private var voice = VoiceAssistantAudio()
+    @State private var didRestoreConversation = false
+    @StateObject private var realtime = OpenAIRealtimeSession()
     @AppStorage("orbit.ai.financeContextEnabled") private var shareFinanceWithAssistant = false
 
     private let startsListening: Bool
@@ -43,7 +52,11 @@ struct AssistantView: View {
         Group {
             if app.connections.aiConnected {
                 VStack(spacing: 0) {
-                    if messages.isEmpty { emptyState } else { conversation }
+                    if messages.isEmpty && !realtime.isActive {
+                        emptyState
+                    } else {
+                        conversation
+                    }
                     inputBar
                 }
             } else {
@@ -51,25 +64,46 @@ struct AssistantView: View {
             }
         }
         .background(AppTheme.background)
-        .navigationTitle("Assistant")
+        .navigationTitle("Orbit Chat")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showConnect) { ConnectChatGPTView().environmentObject(app) }
-        .onChange(of: voice.transcript) { _, transcript in
-            if voiceModeActive { input = transcript }
+        .toolbar {
+            if !messages.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("New conversation", systemImage: "square.and.pencil") {
+                            endLiveConversation()
+                            messages = []
+                            AssistantConversationStore.clear()
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("Conversation options")
+                }
+            }
         }
-        .onChange(of: voice.isFinal) { _, isFinal in
-            guard isFinal, voiceModeActive, !sending else { return }
-            input = voice.transcript
-            send()
+        .sheet(isPresented: $showConnect) { ConnectChatGPTView().environmentObject(app) }
+        .onChange(of: realtime.completedTurn) { _, turn in
+            guard let turn else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                messages.append(ChatMessage(role: turn.role.chatRole, text: turn.text))
+            }
+        }
+        .onChange(of: messages) { _, messages in
+            guard didRestoreConversation else { return }
+            AssistantConversationStore.save(messages)
         }
         .task {
+            if !didRestoreConversation {
+                messages = AssistantConversationStore.load()
+                didRestoreConversation = true
+            }
             guard startsListening, !didAutoStartVoice, app.connections.aiConnected else { return }
             didAutoStartVoice = true
-            await beginVoiceInput()
+            await beginLiveConversation()
         }
         .onDisappear {
-            voice.stopListening()
-            voice.stopSpeaking()
+            realtime.disconnect()
         }
     }
 
@@ -79,7 +113,7 @@ struct AssistantView: View {
         InfoStateView(
             systemImage: "sparkles",
             title: "Connect ChatGPT",
-            message: "The assistant answers using your tasks, reminders, jobs, inbox, calendars, health and any Finance summary you explicitly allow. Connect ChatGPT with your OpenAI key to enable it.",
+            message: "The assistant chats using your To Do list, jobs, inbox, calendars, health and any Finance summary you explicitly allow. Connect OpenAI with your API key to enable it.",
             actionTitle: "Connect ChatGPT"
         ) { showConnect = true }
         .padding(AppTheme.Spacing.lg)
@@ -92,12 +126,21 @@ struct AssistantView: View {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
                     Image(systemName: "sparkles").font(.title).foregroundStyle(AppTheme.primaryText)
-                    Text("Ask about your world")
+                    Text("Start a conversation")
                         .font(.title2.weight(.bold)).foregroundStyle(AppTheme.primaryText)
-                    Text("I answer using the current context already inside Orbit.")
+                    Text("Chat naturally by typing, or start live voice for a hands-free back-and-forth.")
                         .font(.subheadline).foregroundStyle(AppTheme.secondaryText)
                 }
                 .padding(.top, AppTheme.Spacing.xl)
+
+                Button {
+                    Task { await beginLiveConversation() }
+                } label: {
+                    Label("Start live conversation", systemImage: "waveform.circle.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryButtonStyle())
 
                 VStack(spacing: AppTheme.Spacing.sm) {
                     ForEach(suggestions, id: \.self) { suggestion in
@@ -126,28 +169,89 @@ struct AssistantView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: AppTheme.Spacing.md) {
+                    if messages.isEmpty,
+                       realtime.liveUserText.isEmpty,
+                       realtime.liveAssistantText.isEmpty {
+                        LiveReadyCard(isConnecting: realtime.state == .connecting)
+                            .transition(.scale(scale: 0.92).combined(with: .opacity))
+                    }
+
                     ForEach(messages) { message in
-                        MessageBubble(message: message).id(message.id)
+                        MessageBubble(message: message)
+                            .id(message.id)
+                            .transition(
+                                .scale(scale: 0.86, anchor: message.role == .user ? .bottomTrailing : .bottomLeading)
+                                .combined(with: .opacity)
+                            )
                     }
-                    if sending {
-                        HStack { ProgressView(); Spacer() }.padding(.horizontal, AppTheme.Spacing.lg)
+
+                    if !realtime.liveUserText.isEmpty {
+                        MessageBubble(
+                            role: .user,
+                            text: realtime.liveUserText,
+                            isStreaming: true
+                        )
+                        .id("live-user")
+                        .transition(.scale(scale: 0.86, anchor: .bottomTrailing).combined(with: .opacity))
                     }
+
+                    if !realtime.liveAssistantText.isEmpty {
+                        MessageBubble(
+                            role: .assistant,
+                            text: realtime.liveAssistantText,
+                            isStreaming: true
+                        )
+                        .id("live-assistant")
+                        .transition(.scale(scale: 0.86, anchor: .bottomLeading).combined(with: .opacity))
+                    }
+
+                    if (sending && !realtime.isActive)
+                        || (realtime.isResponding && realtime.liveAssistantText.isEmpty) {
+                        ThinkingBubble()
+                            .id("assistant-thinking")
+                            .transition(.scale(scale: 0.86, anchor: .bottomLeading).combined(with: .opacity))
+                    }
+
+                    Color.clear.frame(height: 1).id("conversation-bottom")
                 }
                 .padding(AppTheme.Spacing.lg)
             }
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.count) { _, _ in
-                if let last = messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                scrollToBottom(proxy)
             }
+            .onChange(of: realtime.liveUserText) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: realtime.liveAssistantText) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: realtime.isResponding) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .animation(.spring(response: 0.38, dampingFraction: 0.84), value: messages.count)
+            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: realtime.liveUserText.isEmpty)
+            .animation(.spring(response: 0.34, dampingFraction: 0.86), value: realtime.liveAssistantText.isEmpty)
         }
     }
 
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-            if voice.isListening {
-                Label("Listening… tap stop when you're finished", systemImage: "waveform")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AppTheme.coral)
-            } else if let error = voice.errorMessage {
+            if realtime.isActive {
+                HStack {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        LivePulse(isActive: realtime.state == .connected && !realtime.isMuted)
+                        Label(liveStatus, systemImage: liveStatusIcon)
+                    }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.coral)
+                    Spacer()
+                    Button("End live") { endLiveConversation() }
+                        .font(.caption.weight(.semibold))
+                }
+            }
+
+            if let error = realtime.errorMessage {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(AppTheme.destructive)
@@ -160,176 +264,95 @@ struct AssistantView: View {
                     .padding(.vertical, AppTheme.Spacing.sm)
                     .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous).strokeBorder(AppTheme.border, lineWidth: 1))
+                    .onSubmit(send)
 
-                Button { toggleVoiceInput() } label: {
-                    Image(systemName: voice.isListening ? "stop.circle.fill" : "mic.circle.fill")
+                Button {
+                    if realtime.isActive {
+                        realtime.toggleMute()
+                    } else {
+                        Task { await beginLiveConversation() }
+                    }
+                } label: {
+                    Image(systemName: realtime.isActive
+                          ? (realtime.isMuted ? "mic.slash.circle.fill" : "waveform.circle.fill")
+                          : "waveform.circle.fill")
                         .font(.title)
-                        .foregroundStyle(voice.isListening ? AppTheme.coral : AppTheme.primaryText)
+                        .foregroundStyle(realtime.isActive && !realtime.isMuted ? AppTheme.coral : AppTheme.primaryText)
                         .frame(width: 44, height: 44)
                 }
-                .disabled(sending)
-                .accessibilityLabel(voice.isListening ? "Stop and send" : "Talk to Orbit")
+                .disabled(sending || realtime.state == .connecting)
+                .accessibilityLabel(realtime.isActive
+                                    ? (realtime.isMuted ? "Unmute live conversation" : "Mute live conversation")
+                                    : "Start live conversation")
 
                 Button { send() } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.title)
                 }
                 .tint(AppTheme.brand)
-                .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
+                .disabled(
+                    input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || sending
+                    || realtime.state == .connecting
+                )
             }
         }
         .padding(AppTheme.Spacing.md)
         .background(.ultraThinMaterial)
     }
 
+    private var liveStatus: String {
+        if realtime.state == .connecting { return "Connecting live voice…" }
+        if realtime.isMuted { return "Microphone muted" }
+        if realtime.isUserSpeaking { return "Listening…" }
+        if realtime.isAssistantSpeaking { return "Orbit is speaking…" }
+        if realtime.isResponding { return "Orbit is thinking…" }
+        return "Live — just start talking"
+    }
+
+    private var liveStatusIcon: String {
+        if realtime.state == .connecting { return "network" }
+        if realtime.isMuted { return "mic.slash.fill" }
+        if realtime.isAssistantSpeaking { return "speaker.wave.2.fill" }
+        return "waveform"
+    }
+
     // MARK: Context + send
 
-    private func context(for prompt: String) -> AssistantContext {
-        var lines: [String] = []
-        lines.append("Connections: Gmail \(app.connections.gmailConnected ? "connected" : "not connected"), Outlook \(app.connections.outlookConnected ? "connected" : "not connected"), Calendar \(app.calendar.connectedProviders.map(\.label).sorted().joined(separator: ", ")), Health \(app.connections.healthConnected ? "connected" : "not connected").")
-
-        if shareFinanceWithAssistant, case let .loaded(finance) = app.finance.state {
-            let code = finance.currencyCode
-            lines.append("User-approved Finance summary (currency \(code)):")
-            lines.append("- cash=\(finance.totalCash); credit-card balance=\(finance.totalCreditBalance); investments=\(finance.totalInvestments); current-month inflow=\(finance.monthlyInflow); outflow=\(finance.monthlyOutflow); net=\(finance.monthlyNetFlow)")
-
-            let lowerPrompt = prompt.lowercased()
-            let asksAboutFinance = [
-                "money", "finance", "account", "balance", "cash", "card", "credit",
-                "spend", "spent", "transaction", "bill", "subscription", "income",
-                "earn", "paid", "paycheck", "salary", "wage", "inflow", "outflow"
-            ].contains { lowerPrompt.contains($0) }
-            let asksAboutIncome = [
-                "income", "earn", "paid", "paycheck", "salary", "wage", "employer",
-                "annual", "year to date", "ytd"
-            ].contains { lowerPrompt.contains($0) }
-
-            if asksAboutFinance {
-                for account in finance.accounts.prefix(20) {
-                    lines.append("- account: \(account.maskedName); institution=\(account.institutionName); type=\(account.kind.label); balance=\(account.currentBalance) \(account.currencyCode)")
-                }
-            }
-
-            if asksAboutFinance, !asksAboutIncome, !finance.recentTransactions.isEmpty {
-                lines.append("Recent normalized transactions:")
-                for transaction in finance.recentTransactions.prefix(15) {
-                    lines.append("- \(transaction.date); \(transaction.displayName); \(transaction.direction.rawValue)=\(transaction.amount) \(transaction.currencyCode); category=\(transaction.category ?? "unknown")")
-                }
-            }
-
-            if asksAboutIncome, case let .loaded(income) = app.finance.incomeState {
-                lines.append("DETERMINISTIC INCOME TOOL RESULT (do not recompute or relabel inflow as income):")
-                for summary in income.summaries {
-                    lines.append("- currency=\(summary.currencyCode); confirmed posted this month=\(summary.thisMonth.confirmed); pending income=\(summary.thisMonth.pending); needs review excluded=\(summary.thisMonth.needsReview); confirmed last month=\(summary.lastMonth.confirmed); change amount=\(summary.changeAmount.map { String(describing: $0) } ?? "undefined"); change percent=\(summary.changePercent.map { String(describing: $0) } ?? "undefined"); confirmed YTD=\(summary.yearToDate); average monthly=\(summary.averageMonthly); estimated annual=\(summary.estimatedAnnual.map { String(describing: $0) } ?? "unavailable")")
-                    for source in summary.sources.prefix(20) {
-                        lines.append("- income source: \(source.name); type=\(source.type.rawValue); frequency=\(source.frequency.rawValue); this month=\(source.thisMonth); YTD=\(source.yearToDate); average deposit=\(source.averagePayment); next expected=\(source.nextExpectedPaymentDate ?? "unavailable"); user confirmed=\(source.userConfirmed)")
-                    }
-                    if !summary.history.isEmpty {
-                        lines.append("- confirmed income history: " + summary.history.map { "\($0.month)=\($0.confirmed)" }.joined(separator: "; "))
-                    }
-                    for transaction in summary.confirmedTransactions.prefix(10) {
-                        lines.append("- confirmed observed net deposit: \(transaction.date); \(transaction.sourceName ?? transaction.merchantName ?? transaction.name); amount=\(transaction.amount) \(transaction.currencyCode); pending=\(transaction.pending)")
-                    }
-                    for paycheck in summary.expectedPaychecks.prefix(8) {
-                        lines.append("- expected (not guaranteed): \(paycheck.sourceName); date=\(paycheck.date); estimated amount=\(paycheck.estimatedAmount) \(summary.currencyCode)")
-                    }
-                }
-            }
-        }
-
-        if !app.tasks.prioritizedOpen.isEmpty {
-            lines.append("Open To Do tasks (not reminders or calendar events):")
-            for task in app.tasks.prioritizedOpen.prefix(25) {
-                let due = task.dueDate.map { "; due \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""
-                lines.append("- id=\(task.id.uuidString); \(task.title); priority=\(task.priority.rawValue); source=\(task.source.rawValue)\(due)")
-            }
-        }
-
-        if !app.reminders.open.isEmpty {
-            lines.append("Upcoming Orbit reminders (linked to Apple Calendar when connected):")
-            for reminder in app.reminders.open.prefix(20) {
-                lines.append("- id=\(reminder.id.uuidString); \(reminder.title); fires \(reminder.fireDate.formatted(date: .abbreviated, time: .shortened))")
-            }
-        }
-
-        if !app.tasks.suggestions.isEmpty {
-            lines.append("Unreviewed To Do suggestions extracted from email:")
-            for task in app.tasks.suggestions.prefix(15) {
-                lines.append("- \(task.title)")
-            }
-        }
-
-        let recentCompleted = app.tasks.completed.prefix(10)
-        if !recentCompleted.isEmpty {
-            lines.append("Recently completed To Dos:")
-            for task in recentCompleted {
-                lines.append("- \(task.title); completed or updated \(task.updatedAt.formatted(date: .abbreviated, time: .shortened))")
-            }
-        }
-
-        if !app.detectedJobUpdates.isEmpty {
-            lines.append("Unreviewed job updates detected from connected email:")
-            for update in app.detectedJobUpdates.prefix(15) {
-                let role = update.role.isEmpty ? "" : " — \(update.role)"
-                let next = update.nextAction.isEmpty ? "" : "; next: \(update.nextAction)"
-                lines.append("- \(update.company)\(role) [\(update.status.rawValue)]\(next); evidence: \(update.reason)")
-            }
-        }
-
-        if !jobs.isEmpty {
-            lines.append("Job applications (\(jobs.count) total):")
-            for job in jobs.prefix(25) {
-                let role = job.position.isEmpty ? "?" : job.position
-                let next = job.nextAction.isEmpty ? "" : "; next: \(job.nextAction)"
-                lines.append("- \(job.company) — \(role) [\(job.status.rawValue)]\(next)")
-            }
-        }
-
-        if case let .loaded(msgs) = inbox.state, !msgs.isEmpty {
-            lines.append("Recent important emails:")
-            for message in msgs.prefix(10) {
-                lines.append("- [\(message.provider.label); \(message.mailboxEmail)] \(message.sender): \(message.subject) — \(message.aiSummary)\(message.actionRequired ? " [action required]" : "")")
-            }
-        }
-
-        let events = app.calendar.events
-        if !events.isEmpty {
-            lines.append("Upcoming unified calendar events:")
-            for event in events.prefix(20) {
-                lines.append("- [\(event.provider.label)] \(event.start.formatted(date: .abbreviated, time: .shortened)): \(event.title)")
-            }
-        }
-
-        if case let .loaded(summary) = app.health.state {
-            lines.append("Current Apple Health summary:")
-            lines.append(summary.metrics.map { "\($0.title): \($0.value)" }.joined(separator: "; "))
-        }
-
-        let enabledAutomations = app.automations.automations.filter(\.enabled)
-        if !enabledAutomations.isEmpty {
-            lines.append("Enabled Orbit automations:")
-            for automation in enabledAutomations {
-                lines.append("- \(automation.title); \(automation.frequency)")
-            }
-        }
-
-        return AssistantContext(userName: app.user?.firstName ?? "the user", lines: lines)
+    private var contextBuilder: AssistantContextBuilder {
+        AssistantContextBuilder(
+            app: app,
+            inbox: inbox,
+            jobs: jobs,
+            shareFinance: shareFinanceWithAssistant
+        )
     }
 
     private func send() {
-        if voice.isListening { voice.stopListening() }
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !sending else { return }
+
+        if realtime.isConnected {
+            messages.append(ChatMessage(role: .user, text: text))
+            input = ""
+            if let toolReply = runStructuredTaskTool(text) {
+                messages.append(ChatMessage(role: .assistant, text: toolReply))
+                realtime.recordLocalExchange(userText: text, assistantText: toolReply)
+            } else {
+                realtime.sendText(text)
+            }
+            return
+        }
+
         messages.append(ChatMessage(role: .user, text: text))
         input = ""
         sending = true
         if let toolReply = runStructuredTaskTool(text) {
             messages.append(ChatMessage(role: .assistant, text: toolReply))
-            if voiceModeActive { voice.speak(toolReply) }
             sending = false
             return
         }
-        let ctx = context(for: text)
-        let recentHistory = Array(messages.dropLast().suffix(8))
+        let ctx = contextBuilder.context(for: text)
+        let recentHistory = Array(messages.dropLast().suffix(16))
         Task {
             do {
                 let reply = try await app.assistant.answer(
@@ -338,31 +361,55 @@ struct AssistantView: View {
                     history: recentHistory
                 )
                 messages.append(ChatMessage(role: .assistant, text: reply))
-                if voiceModeActive { voice.speak(reply) }
+                sending = false
             } catch {
                 let reply = "I couldn't get a response: \(error.localizedDescription)"
                 messages.append(ChatMessage(role: .assistant, text: reply))
-                if voiceModeActive { voice.speak(reply) }
+                sending = false
             }
-            sending = false
         }
     }
 
-    private func toggleVoiceInput() {
-        if voice.isListening {
-            input = voice.transcript
-            voice.stopListening()
-            send()
-        } else {
-            Task { await beginVoiceInput() }
+    private func beginLiveConversation() async {
+        guard !sending, !realtime.isActive else { return }
+        guard let key = KeychainStore.get(KeychainKeys.openAIKey), !key.isEmpty else {
+            showConnect = true
+            return
+        }
+
+        let liveContext = contextBuilder.liveContext()
+        let instructions = AssistantPrompt.realtimeInstructions(
+            context: liveContext,
+            history: messages
+        )
+        do {
+            let credential = try await RealtimeClientSecretProvider(apiKey: key)
+                .mintCredential(
+                    model: AppConfig.openAIRealtimeModel,
+                    instructions: instructions
+                )
+            await realtime.connect(
+                credential: credential,
+                model: AppConfig.openAIRealtimeModel,
+                instructions: ""
+            )
+        } catch {
+            realtime.disconnect()
+            messages.append(ChatMessage(
+                role: .assistant,
+                text: "I couldn't start live voice: \(error.localizedDescription)"
+            ))
         }
     }
 
-    private func beginVoiceInput() async {
-        guard !sending else { return }
-        voiceModeActive = true
-        input = ""
-        await voice.startListening()
+    private func endLiveConversation() {
+        realtime.disconnect()
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.22)) {
+            proxy.scrollTo("conversation-bottom", anchor: .bottom)
+        }
     }
 
     /// A small deterministic command surface for writes. Read questions still
@@ -371,11 +418,29 @@ struct AssistantView: View {
     private func runStructuredTaskTool(_ prompt: String) -> String? {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
-        for prefix in ["create task:", "add task:"] where lower.hasPrefix(prefix) {
-            let title = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return "Add a task title after the colon." }
-            app.tasks.add(TaskItem(title: title, dueDate: .now, source: .manual))
-            return "Created “\(title)” in Orbit Tasks for today."
+        let prefixes = [
+            "create task:", "add task:", "create to do:", "add to do:",
+            "remind me to ", "remind me "
+        ]
+        if let prefix = prefixes.first(where: { lower.hasPrefix($0) }) {
+            let request = String(trimmed.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !request.isEmpty else { return "Tell me what you want added to To Do." }
+            let parsed = AssistantTaskInput(request)
+            app.tasks.add(TaskItem(
+                title: parsed.title,
+                dueDate: parsed.date,
+                source: .manual,
+                alertStyle: parsed.date == nil ? TaskAlertStyle.none : TaskAlertStyle.alarm
+            ))
+            if let date = parsed.date {
+                if app.connections.appleCalendarConnected {
+                    return "Added “\(parsed.title)” to To Do for \(date.formatted(date: .abbreviated, time: .shortened)) and linked its schedule to Apple Calendar."
+                }
+                Task { await app.connectAppleCalendar() }
+                return "Added “\(parsed.title)” to To Do for \(date.formatted(date: .abbreviated, time: .shortened)). I’ll ask for Apple Calendar access so its schedule can be linked."
+            }
+            return "Added “\(parsed.title)” to To Do without a schedule, so it stays only in your list."
         }
         if lower == "create tasks for emails i need to respond to" {
             guard !app.tasks.suggestions.isEmpty else {
@@ -389,21 +454,212 @@ struct AssistantView: View {
     }
 }
 
+private struct AssistantTaskInput {
+    let title: String
+    let date: Date?
+
+    init(_ input: String) {
+        guard let detector = try? NSDataDetector(
+            types: NSTextCheckingResult.CheckingType.date.rawValue
+        ), let match = detector.firstMatch(
+            in: input,
+            options: [],
+            range: NSRange(input.startIndex..., in: input)
+        ), let detected = match.date else {
+            title = Self.clean(input)
+            date = nil
+            return
+        }
+
+        if detected <= .now, Calendar.current.isDateInToday(detected) {
+            date = Calendar.current.date(byAdding: .day, value: 1, to: detected)
+        } else {
+            date = detected
+        }
+        let withoutDate = (input as NSString).replacingCharacters(in: match.range, with: "")
+        let cleaned = Self.clean(withoutDate)
+        title = cleaned.isEmpty ? "To Do" : cleaned
+    }
+
+    private static func clean(_ input: String) -> String {
+        input
+            .replacingOccurrences(
+                of: #"\s+\b(for|at|on)\s*$"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+}
+
 private struct MessageBubble: View {
-    let message: ChatMessage
+    let role: ChatMessage.Role
+    let text: String
+    var isStreaming = false
+
+    init(message: ChatMessage) {
+        role = message.role
+        text = message.text
+    }
+
+    init(role: ChatMessage.Role, text: String, isStreaming: Bool = false) {
+        self.role = role
+        self.text = text
+        self.isStreaming = isStreaming
+    }
 
     var body: some View {
-        HStack {
-            if message.role == .user { Spacer(minLength: 40) }
-            Text(message.text)
-                .font(.subheadline)
-                .foregroundStyle(message.role == .user ? AppTheme.onBrand : AppTheme.primaryText)
-                .padding(AppTheme.Spacing.md)
-                .background(
-                    message.role == .user ? AppTheme.brand : AppTheme.secondarySurface,
-                    in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                )
-            if message.role == .assistant { Spacer(minLength: 40) }
+        HStack(alignment: .bottom, spacing: AppTheme.Spacing.sm) {
+            if role == .user { Spacer(minLength: 44) }
+
+            if role == .assistant {
+                ZStack {
+                    Circle().fill(AppTheme.secondarySurface)
+                    Image(systemName: "sparkles")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(AppTheme.primaryText)
+                }
+                .frame(width: 28, height: 28)
+                .overlay(Circle().strokeBorder(AppTheme.border, lineWidth: 1))
+                .accessibilityHidden(true)
+            }
+
+            HStack(alignment: .lastTextBaseline, spacing: 5) {
+                Text(text)
+                    .font(.subheadline)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isStreaming {
+                    Capsule()
+                        .fill(role == .user ? AppTheme.onBrand : AppTheme.coral)
+                        .frame(width: 2, height: 15)
+                        .accessibilityHidden(true)
+                }
+            }
+            .foregroundStyle(role == .user ? AppTheme.onBrand : AppTheme.primaryText)
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .padding(.vertical, 10)
+            .background(
+                role == .user ? AppTheme.brand : AppTheme.secondarySurface,
+                in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+            )
+            .overlay {
+                if role == .assistant {
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                        .strokeBorder(AppTheme.border, lineWidth: 1)
+                }
+            }
+
+            if role == .assistant { Spacer(minLength: 44) }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(role == .user ? "You" : "Orbit")
+        .accessibilityValue(text)
+    }
+}
+
+private struct ThinkingBubble: View {
+    var body: some View {
+        HStack(alignment: .bottom, spacing: AppTheme.Spacing.sm) {
+            ZStack {
+                Circle().fill(AppTheme.secondarySurface)
+                Image(systemName: "sparkles")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(AppTheme.primaryText)
+            }
+            .frame(width: 28, height: 28)
+            .overlay(Circle().strokeBorder(AppTheme.border, lineWidth: 1))
+
+            HStack(spacing: 7) {
+                ProgressView().controlSize(.small)
+                Text("Thinking")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+            .padding(.horizontal, AppTheme.Spacing.md)
+            .padding(.vertical, 10)
+            .background(
+                AppTheme.secondarySurface,
+                in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                    .strokeBorder(AppTheme.border, lineWidth: 1)
+            )
+            Spacer(minLength: 44)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel("Orbit is thinking")
+    }
+}
+
+private struct LiveReadyCard: View {
+    let isConnecting: Bool
+
+    var body: some View {
+        VStack(spacing: AppTheme.Spacing.lg) {
+            ZStack {
+                Circle()
+                    .fill(AppTheme.coral.opacity(0.09))
+                    .frame(width: 92, height: 92)
+                Circle()
+                    .fill(AppTheme.coral.opacity(0.14))
+                    .frame(width: 62, height: 62)
+                Image(systemName: isConnecting ? "network" : "waveform")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(AppTheme.coral)
+            }
+
+            VStack(spacing: AppTheme.Spacing.sm) {
+                Text(isConnecting ? "Starting live conversation…" : "I'm listening")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.primaryText)
+                Text(isConnecting
+                     ? "Orbit is preparing your private context and live audio."
+                     : "Talk naturally, pause when you're done, and interrupt whenever you want.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+
+            if isConnecting {
+                ProgressView().tint(AppTheme.coral)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, AppTheme.Spacing.xxl)
+        .padding(.horizontal, AppTheme.Spacing.lg)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct LivePulse: View {
+    let isActive: Bool
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(AppTheme.coral.opacity(0.35), lineWidth: 2)
+                .scaleEffect(pulse && isActive ? 1.9 : 1)
+                .opacity(pulse && isActive ? 0 : 0.8)
+            Circle()
+                .fill(isActive ? AppTheme.coral : AppTheme.tertiaryText)
+        }
+        .frame(width: 8, height: 8)
+        .onAppear { updateAnimation() }
+        .onChange(of: isActive) { _, _ in updateAnimation() }
+        .accessibilityHidden(true)
+    }
+
+    private func updateAnimation() {
+        pulse = false
+        guard isActive else { return }
+        withAnimation(.easeOut(duration: 1.25).repeatForever(autoreverses: false)) {
+            pulse = true
         }
     }
 }

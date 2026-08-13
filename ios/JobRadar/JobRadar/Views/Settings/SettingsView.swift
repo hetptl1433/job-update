@@ -139,7 +139,7 @@ struct SettingsView: View {
                        connect: { await app.connectAppleCalendar() }, disconnect: { app.disconnectCalendarProvider(.apple) })
             serviceRow("Outlook Calendar", systemImage: "building.2", connected: app.connections.outlookCalendarConnected,
                        connect: { await app.connectOutlookCalendar() }, disconnect: { app.disconnectCalendarProvider(.outlook) })
-            Text("Untimed To Dos stay local. Timed To Dos and reminders create linked Apple Calendar events and sync edits both ways. Any provider event can also be added to To Do manually.")
+            Text("To Do is now one list: items without a date stay local, while items with a date and time create a linked Apple Calendar event and sync edits both ways.")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
             serviceRow("Apple Health", systemImage: "heart", connected: app.connections.healthConnected,
                        connect: { await app.connectHealth() }, disconnect: { app.disconnectHealth() })
@@ -200,9 +200,9 @@ struct SettingsView: View {
     private var siriSection: some View {
         Section("Siri & Widgets") {
             ShortcutsLink()
-            Text("Say “Siri, set a task in Orbit,” then answer “washing at 5 PM.” Orbit extracts the time, uses Alarm by default, and syncs the timed To Do to Apple Calendar when Calendar sync is enabled.")
+            Text("Say “Siri, set a task in Orbit,” then answer “washing at 5 PM.” Orbit extracts the time, uses Alarm by default, and syncs that To Do to Apple Calendar.")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
-            Label("Add Orbit Today and Orbit Reminders from the iPhone widget gallery. Both support quick add and completion.", systemImage: "rectangle.3.group")
+            Label("Add Orbit To Do, Orbit Scheduled, and Ask Orbit from the widget gallery for readable tasks, quick actions, chat, and live voice.", systemImage: "rectangle.3.group")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
         }
     }

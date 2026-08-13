@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 const ACCOUNT_TYPES = Object.freeze({
   depository: null,
   credit: "creditCard",
@@ -103,6 +105,180 @@ function publicTransaction(record) {
   };
 }
 
+const DAY_MILLISECONDS = 86_400_000;
+const RECURRING_CADENCES = Object.freeze([
+  { cadence: "weekly", days: 7, tolerance: 2, minimumOccurrences: 3, monthlyFactor: 52 / 12 },
+  { cadence: "biweekly", days: 14, tolerance: 3, minimumOccurrences: 3, monthlyFactor: 26 / 12 },
+  { cadence: "monthly", days: 30.4375, tolerance: 7, minimumOccurrences: 3, monthlyFactor: 1 },
+  { cadence: "quarterly", days: 91.3125, tolerance: 14, minimumOccurrences: 3, monthlyFactor: 1 / 3 },
+  { cadence: "annual", days: 365.25, tolerance: 40, minimumOccurrences: 2, monthlyFactor: 1 / 12 }
+]);
+const NON_RECURRING_CATEGORY = /food|general merchandise|transportation|travel|medical|transfer|income/i;
+
+function median(values) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function roundMoney(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function recurringDescriptor(transaction) {
+  const raw = transaction.merchantName || transaction.name || "";
+  return raw
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/^(?:sq \*|tst\*|paypal \*|google \*|apple\.com\/bill\s*)/, "")
+    .replace(/\b(?:purchase|payment|debit|recurring|subscription)\b/g, " ")
+    .replace(/\b\d{4,}\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function utcDay(dateString) {
+  const milliseconds = Date.parse(`${dateString}T00:00:00Z`);
+  return Number.isFinite(milliseconds) ? milliseconds : null;
+}
+
+function addUTCDays(dateString, days) {
+  const start = utcDay(dateString);
+  if (start == null) return null;
+  return new Date(start + Math.round(days) * DAY_MILLISECONDS).toISOString().slice(0, 10);
+}
+
+function detectCadence(transactions) {
+  const dated = transactions
+    .map(transaction => ({ transaction, day: utcDay(transaction.date) }))
+    .filter(entry => entry.day != null)
+    .sort((a, b) => a.day - b.day);
+  if (dated.length < 2) return null;
+
+  // Multiple same-day charges from one merchant are purchases, not evidence
+  // of a recurring interval. Keep one representative per posting date.
+  const uniqueDays = [];
+  for (const entry of dated) {
+    if (uniqueDays.at(-1)?.day === entry.day) continue;
+    uniqueDays.push(entry);
+  }
+  if (uniqueDays.length < 2) return null;
+
+  const intervals = uniqueDays.slice(1).map((entry, index) =>
+    (entry.day - uniqueDays[index].day) / DAY_MILLISECONDS
+  );
+  let best = null;
+  for (const cadence of RECURRING_CADENCES) {
+    if (uniqueDays.length < cadence.minimumOccurrences) continue;
+    const matching = intervals.filter(interval => Math.abs(interval - cadence.days) <= cadence.tolerance);
+    const requiredMatches = cadence.cadence === "annual"
+      ? 1
+      : Math.max(2, Math.ceil(intervals.length * 0.65));
+    if (matching.length < requiredMatches) continue;
+
+    const averageError = matching.reduce(
+      (total, interval) => total + Math.abs(interval - cadence.days) / cadence.tolerance,
+      0
+    ) / matching.length;
+    const score = (matching.length / intervals.length) - averageError * 0.15;
+    if (!best || score > best.score) {
+      best = { ...cadence, score, intervalDays: median(matching), occurrences: uniqueDays.length };
+    }
+  }
+  return best;
+}
+
+function recurringPayments(transactions, now) {
+  const groups = new Map();
+  for (const transaction of transactions) {
+    if (transaction.pending || transaction.direction !== "outflow" || transaction.amount < 0.5) continue;
+    const descriptor = recurringDescriptor(transaction);
+    if (descriptor.length < 2) continue;
+    const key = `${transaction.currencyCode}|${descriptor}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(transaction);
+  }
+
+  const today = now.toISOString().slice(0, 10);
+  const todayDay = utcDay(today);
+  const results = [];
+  for (const [key, group] of groups) {
+    const cadence = detectCadence(group);
+    if (!cadence) continue;
+
+    const amounts = group.map(transaction => transaction.amount);
+    const typicalAmount = median(amounts);
+    const fixedTolerance = Math.max(3, typicalAmount * 0.2);
+    const consistentCount = amounts.filter(amount => Math.abs(amount - typicalAmount) <= fixedTolerance).length;
+    const amountConsistency = consistentCount / amounts.length;
+    const latest = [...group].sort((a, b) => b.date.localeCompare(a.date))[0];
+    const category = latest.category ?? null;
+    if (NON_RECURRING_CATEGORY.test(category ?? "")) continue;
+    const variableCategory = /rent|utilit|telecommunication|insurance/i.test(category ?? "");
+    if (amountConsistency < (variableCategory ? 0.5 : 0.75)) continue;
+
+    const latestDay = utcDay(latest.date);
+    if (latestDay == null || todayDay == null) continue;
+    const daysSinceLatest = (todayDay - latestDay) / DAY_MILLISECONDS;
+    if (daysSinceLatest > cadence.days * 1.8 + cadence.tolerance) continue;
+
+    let nextExpectedDate = addUTCDays(latest.date, cadence.intervalDays || cadence.days);
+    // A payment can post a few days late. Once its estimated date has passed,
+    // roll the prediction forward one cadence instead of displaying a stale
+    // date as a guaranteed overdue bill.
+    for (let index = 0; nextExpectedDate && nextExpectedDate < today && index < 3; index += 1) {
+      nextExpectedDate = addUTCDays(nextExpectedDate, cadence.intervalDays || cadence.days);
+    }
+
+    const monthlyAmount = roundMoney(typicalAmount * cadence.monthlyFactor);
+    const confidence = Math.min(0.99, Math.max(0.5,
+      cadence.score * 0.65 + amountConsistency * 0.25 + Math.min(group.length / 12, 1) * 0.1
+    ));
+    results.push({
+      id: createHash("sha256").update(key, "utf8").digest("hex").slice(0, 24),
+      name: latest.merchantName || latest.name,
+      category,
+      amount: roundMoney(typicalAmount),
+      monthlyAmount,
+      currencyCode: latest.currencyCode,
+      cadence: cadence.cadence,
+      lastChargeDate: latest.date,
+      nextExpectedDate,
+      occurrences: cadence.occurrences,
+      isVariable: amounts.some(amount => Math.abs(amount - typicalAmount) > Math.max(1, typicalAmount * 0.05)),
+      confidence: Math.round(confidence * 100) / 100
+    });
+  }
+
+  return results.sort((a, b) =>
+    (a.nextExpectedDate ?? "9999").localeCompare(b.nextExpectedDate ?? "9999") || a.name.localeCompare(b.name)
+  );
+}
+
+function spendingByCategory(transactions, currentMonth, monthlyOutflow) {
+  const totals = new Map();
+  for (const transaction of transactions) {
+    if (transaction.pending || transaction.direction !== "outflow" || !transaction.date.startsWith(currentMonth)) {
+      continue;
+    }
+    const name = transaction.category || "Other";
+    totals.set(name, (totals.get(name) ?? 0) + transaction.amount);
+  }
+  return [...totals.entries()]
+    .map(([name, amount]) => ({
+      id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "other",
+      name,
+      amount: roundMoney(amount),
+      share: monthlyOutflow > 0 ? Math.round((amount / monthlyOutflow) * 10_000) / 10_000 : 0
+    }))
+    .sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name))
+    .slice(0, 6);
+}
+
 export function buildOverview(records, now = new Date()) {
   const itemRecords = records.filter(record => record.entityType === "PLAID_ITEM");
   const accounts = records.filter(record => record.entityType === "ACCOUNT").map(publicAccount);
@@ -139,6 +315,8 @@ export function buildOverview(records, now = new Date()) {
   const totalInvestments = accounts
     .filter(account => account.kind === "investment")
     .reduce((total, account) => total + account.currentBalance, 0);
+  const recurring = recurringPayments(transactions, now);
+  const categories = spendingByCategory(transactions, currentMonth, monthlyOutflow);
 
   const lastUpdatedAt = records
     .map(record => record.updatedAt)
@@ -155,6 +333,9 @@ export function buildOverview(records, now = new Date()) {
     totalCash,
     totalCreditBalance,
     totalInvestments,
+    recurringPayments: recurring,
+    monthlyRecurringTotal: roundMoney(recurring.reduce((total, payment) => total + payment.monthlyAmount, 0)),
+    spendingByCategory: categories,
     currencyCode: accounts[0]?.currencyCode ?? "USD",
     lastUpdatedAt
   };

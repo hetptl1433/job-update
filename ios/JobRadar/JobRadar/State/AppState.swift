@@ -50,6 +50,11 @@ struct AppAlert: Identifiable {
 @MainActor
 final class AppState: ObservableObject {
     enum Tab: Hashable { case home, tasks, inbox, jobs, finance }
+    enum AssistantLaunch: String, Identifiable {
+        case chat
+        case voice
+        var id: String { rawValue }
+    }
     enum Phase: Equatable {
         case launching
         case signedOut
@@ -61,7 +66,7 @@ final class AppState: ObservableObject {
     @Published private(set) var phase: Phase = .launching
     @Published var selectedTab: Tab = .home
     @Published var financePath: [FinanceRoute] = []
-    @Published var voiceAssistantRequested = false
+    @Published var assistantLaunch: AssistantLaunch?
     /// The single signed-in identity (one email).
     @Published private(set) var user: UserSession?
     /// Connected mailboxes. `user` remains the one primary Orbit identity while
@@ -86,7 +91,6 @@ final class AppState: ObservableObject {
     let jobs: JobRepository
     let inbox: EmailRepository
     let tasks: TaskRepository
-    let reminders: ReminderRepository
     let calendar: CalendarRepository
     let finance: FinanceRepository
     let assistant: AssistantService
@@ -118,12 +122,22 @@ final class AppState: ObservableObject {
         self.jobs = JobRepository(api: api, context: modelContext)
         self.inbox = EmailRepository()
         self.tasks = TaskRepository()
-        self.reminders = ReminderRepository()
         self.calendar = CalendarRepository()
         self.finance = FinanceRepository(api: financeAPI, auth: auth)
         self.assistant = LiveAssistantService()
         self.health = HealthRepository()
         self.automations = AutomationService()
+
+        WatchTaskSyncService.shared.onVoiceBootstrapRequested = { [weak self] request in
+            guard let self else {
+                return .failure(WatchVoiceFailure(
+                    requestID: request.requestID,
+                    code: .phoneNotReady,
+                    message: "Open Orbit on your iPhone, then try again."
+                ))
+            }
+            return await self.makeWatchVoiceBootstrap(for: request)
+        }
     }
 
     // MARK: Launch
@@ -297,7 +311,6 @@ final class AppState: ObservableObject {
             try await appleCalendarAPI.requestAccess()
             calendar.setConnected(.apple, true)
             tasks.setAppleCalendarSyncEnabled(true)
-            reminders.setAppleCalendarSyncEnabled(true)
             persistCalendarProviders()
             updateCalendarConnectionState()
             await refreshCalendar()
@@ -335,7 +348,6 @@ final class AppState: ObservableObject {
             do {
                 _ = try await appleCalendarAPI.upcomingEvents()
                 tasks.reconcileWithAppleCalendar()
-                reminders.reconcileWithAppleCalendar()
                 calendar.setEvents(try await appleCalendarAPI.upcomingEvents(), for: .apple)
                 succeeded += 1
             } catch { failures.append("Apple Calendar: \(error.localizedDescription)") }
@@ -400,7 +412,6 @@ final class AppState: ObservableObject {
     func disconnectCalendar() {
         calendar.disconnectAll()
         tasks.setAppleCalendarSyncEnabled(false)
-        reminders.setAppleCalendarSyncEnabled(false)
         persistCalendarProviders()
         updateCalendarConnectionState()
         calendarState = .disconnected
@@ -410,7 +421,6 @@ final class AppState: ObservableObject {
         calendar.setConnected(provider, false)
         if provider == .apple {
             tasks.setAppleCalendarSyncEnabled(false)
-            reminders.setAppleCalendarSyncEnabled(false)
         }
         persistCalendarProviders()
         updateCalendarConnectionState()
@@ -457,6 +467,64 @@ final class AppState: ObservableObject {
     func disconnectChatGPT() {
         KeychainStore.remove(KeychainKeys.openAIKey)
         connections.aiConnected = false
+    }
+
+    /// Creates a preconfigured, short-lived Realtime credential for the paired
+    /// Watch. The owner's long-lived key remains in the iPhone Keychain and the
+    /// privacy-filtered assistant context is bound to the credential before it
+    /// crosses WatchConnectivity.
+    private func makeWatchVoiceBootstrap(
+        for request: WatchVoiceRequest
+    ) async -> Result<WatchVoiceBootstrap, WatchVoiceFailure> {
+        guard let key = KeychainStore.get(KeychainKeys.openAIKey), !key.isEmpty else {
+            return .failure(WatchVoiceFailure(
+                requestID: request.requestID,
+                code: .phoneNotReady,
+                message: "Connect ChatGPT in Orbit Settings on your iPhone first."
+            ))
+        }
+
+        let context = AssistantContextBuilder(
+            app: self,
+            inbox: inbox,
+            jobs: jobs.allApplications(),
+            shareFinance: UserDefaults.standard.bool(
+                forKey: "orbit.ai.financeContextEnabled"
+            )
+        ).liveContext()
+        let instructions = AssistantPrompt.realtimeInstructions(
+            context: context,
+            history: AssistantConversationStore.load()
+        )
+        let model = AppConfig.openAIRealtimeModel
+
+        do {
+            let credential = try await RealtimeClientSecretProvider(apiKey: key)
+                .mintCredential(model: model, instructions: instructions)
+            guard let expiresAt = credential.expiresAt else {
+                throw RealtimeClientSecretProviderError.invalidResponse
+            }
+            let bootstrap = WatchVoiceBootstrap(
+                clientSecretValue: credential.value,
+                expiresAt: expiresAt,
+                model: model,
+                requestID: request.requestID
+            )
+            guard bootstrap.isUsable() else {
+                return .failure(WatchVoiceFailure(
+                    requestID: request.requestID,
+                    code: .credentialExpired,
+                    message: "The voice credential expired before it reached your Watch. Try again."
+                ))
+            }
+            return .success(bootstrap)
+        } catch {
+            return .failure(WatchVoiceFailure(
+                requestID: request.requestID,
+                code: .bootstrapFailed,
+                message: error.localizedDescription
+            ))
+        }
     }
 
     // MARK: Email → AI → dashboard pipeline
@@ -587,8 +655,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// The Inbox cache is intentionally in-memory. Restore the visible
-    /// connection immediately, then perform one silent load when Inbox opens.
+    /// Restore the protected Inbox snapshot immediately, then perform one
+    /// silent provider refresh when Inbox opens.
     func loadInboxIfNeeded() async {
         guard inbox.needsInitialLoad else { return }
         guard connections.emailConnected else {
@@ -607,7 +675,6 @@ final class AppState: ObservableObject {
     func refreshDashboard() async {
         _ = await jobs.refresh()
         tasks.reload()
-        reminders.reload()
         inbox.clearTransientFailure()
         if connections.emailConnected && connections.aiConnected {
             await syncEmail(presentErrors: false)
@@ -626,7 +693,6 @@ final class AppState: ObservableObject {
 
     func refreshTasks() async {
         tasks.reload()
-        reminders.reload()
         inbox.clearTransientFailure()
         if connections.calendarConnected { await refreshCalendar(presentErrors: false) }
         if connections.emailConnected && connections.aiConnected {
@@ -687,9 +753,14 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func handleOpenURL(_ url: URL) -> Bool {
+        if url.scheme == "orbit", url.host == "assistant" {
+            selectedTab = .home
+            assistantLaunch = .chat
+            return true
+        }
         if url.scheme == "orbit", url.host == "voice" {
             selectedTab = .home
-            voiceAssistantRequested = true
+            assistantLaunch = .voice
             return true
         }
         if url.scheme == "orbit", url.host == "finance" {
@@ -716,10 +787,12 @@ final class AppState: ObservableObject {
             return true
         }
         if url.scheme == "orbit", url.host == "reminders" {
+            // Backward compatibility for old widgets and Calendar event URLs:
+            // migrated reminders retain their UUID in the unified To Do store.
             selectedTab = .tasks
             if let value = url.pathComponents.dropFirst().first {
-                if value == "new" { reminders.createReminderRequested = true }
-                else if let id = UUID(uuidString: value) { reminders.openReminderID = id }
+                if value == "new" { tasks.createTaskRequested = true }
+                else if let id = UUID(uuidString: value) { tasks.openTaskID = id }
             }
             return true
         }
@@ -767,9 +840,7 @@ final class AppState: ObservableObject {
         updateEmailConnectionState()
         updateCalendarConnectionState()
         tasks.reload()
-        reminders.reload()
         tasks.setAppleCalendarSyncEnabled(calendar.connectedProviders.contains(.apple))
-        reminders.setAppleCalendarSyncEnabled(calendar.connectedProviders.contains(.apple))
     }
 
     private func persistEmailAccounts() {
@@ -816,10 +887,11 @@ final class AppState: ObservableObject {
         inbox.markConnected(false)
         calendar.disconnectAll()
         tasks.setAppleCalendarSyncEnabled(false)
-        reminders.setAppleCalendarSyncEnabled(false)
         calendarState = .disconnected
         health.disconnect()
         finance.clear()
+        AssistantConversationStore.clear()
+        assistantLaunch = nil
         financePath = []
         phase = .signedOut
     }

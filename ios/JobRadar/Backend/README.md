@@ -46,11 +46,19 @@ returns the same overview envelope as `GET /api/plaid/overview`:
     "totalCash": 0,
     "totalCreditBalance": 0,
     "totalInvestments": 0,
+    "recurringPayments": [],
+    "monthlyRecurringTotal": 0,
+    "spendingByCategory": [],
     "currencyCode": "USD",
     "lastUpdatedAt": "2026-08-09T00:00:00Z"
   }
 }
 ```
+
+`recurringPayments` contains conservative cadence-based estimates from posted
+outflows, including monthly-equivalent amounts and the next expected date.
+`spendingByCategory` contains the six largest posted outflow categories for the
+current month. Pending transactions are excluded from both insights.
 
 Normalize each transaction to a positive `amount` plus an explicit `direction`
 of `inflow` or `outflow`. Use Plaid `date` as the posted date and retain

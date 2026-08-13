@@ -22,7 +22,6 @@ struct JobRadarApp: App {
                 .environmentObject(appState)
                 .environmentObject(appState.inbox)
                 .environmentObject(appState.tasks)
-                .environmentObject(appState.reminders)
                 .environmentObject(appState.calendar)
                 .environmentObject(appState.finance)
                 .environmentObject(appState.health)
@@ -36,7 +35,6 @@ struct JobRadarApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         appState.tasks.reload()
-                        appState.reminders.reload()
                     }
                 }
         }

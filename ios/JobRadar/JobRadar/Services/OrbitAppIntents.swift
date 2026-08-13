@@ -46,8 +46,8 @@ struct CreateOrbitTaskIntent: AppIntent {
 }
 
 struct CreateOrbitReminderIntent: AppIntent {
-    static var title: LocalizedStringResource = "Create Orbit Reminder"
-    static var description = IntentDescription("Creates a timed reminder in Orbit.")
+    static var title: LocalizedStringResource = "Create Timed Orbit To Do"
+    static var description = IntentDescription("Creates a timed item in Orbit's unified To Do list.")
     static var openAppWhenRun = false
 
     @Parameter(
@@ -68,12 +68,12 @@ struct CreateOrbitReminderIntent: AppIntent {
         guard let resolvedDate = fireDate ?? spokenInput.date else {
             throw $fireDate.needsValueError("When should Orbit remind you?")
         }
-        _ = await OrbitIntentWriter.createReminder(
+        _ = await OrbitIntentWriter.createTask(
             title: spokenInput.title,
-            fireDate: resolvedDate,
+            dueDate: resolvedDate,
             alertStyle: alert.taskStyle
         )
-        return .result(dialog: "Reminder added to Orbit.")
+        return .result(dialog: "Timed To Do added to Orbit.")
     }
 }
 
@@ -101,7 +101,7 @@ struct OrbitAppShortcuts: AppShortcutsProvider {
                 "Set a reminder in \(.applicationName)",
                 "Set this reminder on \(.applicationName)"
             ],
-            shortTitle: "Add Reminder",
+            shortTitle: "Add Timed To Do",
             systemImageName: "alarm"
         )
     }
@@ -184,32 +184,4 @@ private enum OrbitIntentWriter {
         return item
     }
 
-    static func createReminder(
-        title: String,
-        fireDate: Date,
-        alertStyle: TaskAlertStyle
-    ) async -> ReminderItem? {
-        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanTitle.isEmpty else { return nil }
-        var item = ReminderItem(
-            title: cleanTitle,
-            fireDate: fireDate,
-            alertStyle: alertStyle
-        )
-        var values = SharedReminderStore.load()
-        values.append(item)
-        _ = SharedReminderStore.save(values)
-        await TaskAlertScheduler.shared.synchronize(reminder: item)
-
-        if OrbitIntegrationPreferences.appleCalendarSyncEnabled,
-           let identifier = try? AppleCalendarService().synchronize(item) {
-            item.relatedCalendarEventID = identifier
-            if let index = values.firstIndex(where: { $0.id == item.id }) {
-                values[index] = item
-                _ = SharedReminderStore.save(values)
-            }
-        }
-        WidgetCenter.shared.reloadAllTimelines()
-        return item
-    }
 }

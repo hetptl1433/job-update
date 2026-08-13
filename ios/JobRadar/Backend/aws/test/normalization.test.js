@@ -136,3 +136,100 @@ test("builds compact totals without leaking backend storage fields", () => {
   assert.equal(overview.institutions[0].accountCount, 2);
   assert.equal("accessTokenCiphertext" in overview.institutions[0], false);
 });
+
+test("detects active recurring payments and normalizes them to a monthly total", () => {
+  const dates = ["2026-05-05", "2026-06-05", "2026-07-05", "2026-08-05"];
+  const records = dates.map((date, index) => ({
+    entityType: "TRANSACTION",
+    itemID: "item-1",
+    ...normalizeTransaction({
+      transaction_id: `stream-${index}`,
+      account_id: "credit-1",
+      date,
+      name: "STREAMFLIX SUBSCRIPTION 483920",
+      merchant_name: "Streamflix",
+      amount: 15.99,
+      pending: false,
+      iso_currency_code: "USD",
+      personal_finance_category: { primary: "ENTERTAINMENT" }
+    })
+  }));
+
+  const overview = buildOverview(records, new Date("2026-08-11T12:00:00Z"));
+
+  assert.equal(overview.recurringPayments.length, 1);
+  assert.equal(overview.recurringPayments[0].name, "Streamflix");
+  assert.equal(overview.recurringPayments[0].cadence, "monthly");
+  assert.equal(overview.recurringPayments[0].amount, 15.99);
+  assert.equal(overview.recurringPayments[0].monthlyAmount, 15.99);
+  assert.equal(overview.recurringPayments[0].nextExpectedDate, "2026-09-05");
+  assert.equal(overview.monthlyRecurringTotal, 15.99);
+});
+
+test("does not label ordinary repeat purchases or old canceled charges as subscriptions", () => {
+  const groceryDates = ["2026-07-18", "2026-07-25", "2026-08-01", "2026-08-08"];
+  const canceledDates = ["2025-11-10", "2025-12-10", "2026-01-10"];
+  const records = [
+    ...groceryDates.map((date, index) => ({
+      entityType: "TRANSACTION",
+      ...normalizeTransaction({
+        transaction_id: `grocery-${index}`,
+        account_id: "checking-1",
+        date,
+        name: "Neighborhood Market",
+        amount: 42,
+        pending: false,
+        iso_currency_code: "USD",
+        personal_finance_category: { primary: "FOOD_AND_DRINK" }
+      })
+    })),
+    ...canceledDates.map((date, index) => ({
+      entityType: "TRANSACTION",
+      ...normalizeTransaction({
+        transaction_id: `canceled-${index}`,
+        account_id: "credit-1",
+        date,
+        name: "Old Video Service",
+        amount: 12,
+        pending: false,
+        iso_currency_code: "USD",
+        personal_finance_category: { primary: "ENTERTAINMENT" }
+      })
+    }))
+  ];
+
+  const overview = buildOverview(records, new Date("2026-08-11T12:00:00Z"));
+
+  assert.deepEqual(overview.recurringPayments, []);
+  assert.equal(overview.monthlyRecurringTotal, 0);
+});
+
+test("builds a current-month spending breakdown without pending charges", () => {
+  const records = [
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "rent", account_id: "checking", date: "2026-08-01", name: "Rent",
+      amount: 1200, pending: false, iso_currency_code: "USD",
+      personal_finance_category: { primary: "RENT_AND_UTILITIES" }
+    }) },
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "dinner", account_id: "credit", date: "2026-08-03", name: "Dinner",
+      amount: 100, pending: false, iso_currency_code: "USD",
+      personal_finance_category: { primary: "FOOD_AND_DRINK" }
+    }) },
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "pending", account_id: "credit", date: "2026-08-04", name: "Pending Dinner",
+      amount: 50, pending: true, iso_currency_code: "USD",
+      personal_finance_category: { primary: "FOOD_AND_DRINK" }
+    }) }
+  ];
+
+  const overview = buildOverview(records, new Date("2026-08-11T12:00:00Z"));
+
+  assert.equal(overview.monthlyOutflow, 1300);
+  assert.deepEqual(overview.spendingByCategory.map(category => category.name), [
+    "Rent And Utilities",
+    "Food And Drink"
+  ]);
+  assert.equal(overview.spendingByCategory[0].amount, 1200);
+  assert.equal(overview.spendingByCategory[0].share, 0.9231);
+});

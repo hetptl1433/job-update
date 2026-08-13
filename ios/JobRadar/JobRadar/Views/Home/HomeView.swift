@@ -121,7 +121,7 @@ struct HomeView: View {
 
             Divider().frame(height: 24)
 
-            Button { app.voiceAssistantRequested = true } label: {
+            Button { app.assistantLaunch = .voice } label: {
                 Image(systemName: "mic.fill")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(AppTheme.primaryText)

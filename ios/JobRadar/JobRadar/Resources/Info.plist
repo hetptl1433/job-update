@@ -61,9 +61,9 @@
 	<key>MicrosoftTenantID</key>
 	<string>common</string>
 	<key>NSAlarmKitUsageDescription</key>
-	<string>Orbit schedules prominent alarms for timed To Dos and reminders when you choose Alarm.</string>
+	<string>Orbit schedules prominent alarms for timed To Dos when you choose Alarm.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos and reminders.</string>
+	<string>Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Orbit shows your sleep, steps, workouts and heart data in your daily summary. This information stays on your device unless you choose to share it.</string>
 	<key>NSMicrophoneUsageDescription</key>
@@ -72,6 +72,8 @@
 	<string>Orbit transcribes what you say in voice mode so your assistant can answer using your Orbit data.</string>
 	<key>OpenAIModel</key>
 	<string>gpt-4o-mini</string>
+	<key>OpenAIRealtimeModel</key>
+	<string>gpt-realtime-2.1</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

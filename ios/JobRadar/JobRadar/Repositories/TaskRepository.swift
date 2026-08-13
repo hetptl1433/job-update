@@ -11,6 +11,7 @@ final class TaskRepository: ObservableObject {
     @Published var createTaskRequested = false
 
     private let appleCalendar = AppleCalendarService()
+    private let watchSync: WatchTaskSyncService
 
     var prioritizedOpen: [TaskItem] { SharedTaskStore.prioritized(tasks) }
     var today: [TaskItem] {
@@ -18,12 +19,30 @@ final class TaskRepository: ObservableObject {
     }
     var completed: [TaskItem] { tasks.filter(\.isCompleted).sorted { $0.updatedAt > $1.updatedAt } }
 
-    init() {
+    init(watchSync: WatchTaskSyncService = .shared) {
+        self.watchSync = watchSync
+        let migrated = SharedTaskStore.migrateLegacyRemindersIfNeeded()
+        watchSync.onTaskCompleted = { [weak self] id in
+            self?.completeFromWatch(id)
+        }
+        watchSync.start()
         reload()
         calendarSyncEnabled = OrbitIntegrationPreferences.appleCalendarSyncEnabled
+        for task in migrated {
+            // Cancel the legacy notification namespace before scheduling the
+            // same item through the unified To Do path.
+            Task {
+                await TaskAlertScheduler.shared.cancel(reminderID: task.id)
+                await TaskAlertScheduler.shared.synchronize(task: task)
+            }
+            if calendarSyncEnabled { synchronizeToApple(task.id) }
+        }
     }
 
-    func reload() { tasks = SharedTaskStore.load() }
+    func reload() {
+        tasks = SharedTaskStore.load()
+        watchSync.publish(tasks: tasks)
+    }
 
     func add(_ item: TaskItem) {
         var value = item
@@ -47,6 +66,14 @@ final class TaskRepository: ObservableObject {
         tasks[index].isCompleted.toggle()
         tasks[index].updatedAt = .now
         persistAndSynchronize(tasks[index].id)
+    }
+
+    private func completeFromWatch(_ id: UUID) {
+        guard let index = tasks.firstIndex(where: { $0.id == id }),
+              !tasks[index].isCompleted else { return }
+        tasks[index].isCompleted = true
+        tasks[index].updatedAt = .now
+        persistAndSynchronize(id)
     }
 
     func delete(_ item: TaskItem) {
@@ -169,6 +196,8 @@ final class TaskRepository: ObservableObject {
 
     private func persist() {
         _ = SharedTaskStore.save(tasks)
+        watchSync.publish(tasks: tasks)
         WidgetCenter.shared.reloadTimelines(ofKind: "OrbitTasksWidget")
+        WidgetCenter.shared.reloadTimelines(ofKind: "OrbitRemindersWidget")
     }
 }

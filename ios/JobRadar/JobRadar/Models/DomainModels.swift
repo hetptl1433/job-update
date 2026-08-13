@@ -47,7 +47,7 @@ struct AttentionItem: Identifiable, Hashable {
 
 // MARK: - Inbox
 
-enum InboxSection: String, CaseIterable, Identifiable {
+enum InboxSection: String, Codable, CaseIterable, Identifiable {
     case needsAction = "Needs Action"
     case important = "Important"
     case jobs = "Jobs"
@@ -57,7 +57,7 @@ enum InboxSection: String, CaseIterable, Identifiable {
 
 /// AI-classified provider-neutral mail. Provider API payloads are normalized
 /// before the Inbox, Home, Tasks, Jobs, or Assistant consumes them.
-struct InboxMessage: Identifiable, Hashable {
+struct InboxMessage: Identifiable, Codable, Hashable {
     let id: String
     var provider: EmailProviderType
     var accountID: String

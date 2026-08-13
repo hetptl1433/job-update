@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.hetpatel
   deploymentTarget:
     iOS: "17.0"
+    watchOS: "10.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -30,6 +31,8 @@ targets:
         product: MSAL
       - target: OrbitTasksWidget
         embed: true
+      - target: OrbitWatchApp
+        embed: true
     info:
       path: JobRadar/Resources/Info.plist
       properties:
@@ -37,6 +40,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         OpenAIModel: gpt-4o-mini
+        OpenAIRealtimeModel: gpt-realtime-2.1
         APIBaseURL: ""
         FinanceAPIBaseURL: "https://api.ipodeskai.com/"
         GIDClientID: 580282197414-mblf538qedv9amtnk0ecovdcko8h8eo9.apps.googleusercontent.com
@@ -52,8 +56,8 @@ targets:
         LSApplicationQueriesSchemes:
           - msauthv2
           - msauthv3
-        NSCalendarsFullAccessUsageDescription: Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos and reminders.
-        NSAlarmKitUsageDescription: Orbit schedules prominent alarms for timed To Dos and reminders when you choose Alarm.
+        NSCalendarsFullAccessUsageDescription: Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos.
+        NSAlarmKitUsageDescription: Orbit schedules prominent alarms for timed To Dos when you choose Alarm.
         NSHealthShareUsageDescription: Orbit shows your sleep, steps, workouts and heart data in your daily summary. This information stays on your device unless you choose to share it.
         NSMicrophoneUsageDescription: Orbit uses the microphone only while you use voice mode to ask your assistant a question.
         NSSpeechRecognitionUsageDescription: Orbit transcribes what you say in voice mode so your assistant can answer using your Orbit data.
@@ -111,6 +115,35 @@ targets:
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
         TARGETED_DEVICE_FAMILY: "1"
+  OrbitWatchApp:
+    type: application
+    platform: watchOS
+    sources:
+      - path: OrbitWatchApp
+      - path: Shared/WatchTaskSync.swift
+      - path: Shared/WatchVoiceSync.swift
+      - path: Shared/OpenAIRealtimeSession.swift
+      - path: JobRadar/Assets.xcassets
+        buildPhase: resources
+    info:
+      path: OrbitWatchApp/Info.plist
+      properties:
+        CFBundleDisplayName: Orbit
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        WKCompanionAppBundleIdentifier: com.hetpatel.jobradar
+        NSMicrophoneUsageDescription: Orbit uses the microphone only while you talk with your assistant.
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - orbit-watch
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_BUNDLE_IDENTIFIER: com.hetpatel.jobradar.watchkitapp
+        PRODUCT_NAME: OrbitWatchApp
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VN6463GX9K
+        TARGETED_DEVICE_FAMILY: "4"
   JobRadarTests:
     type: bundle.unit-test
     platform: iOS
@@ -131,6 +164,7 @@ schemes:
       targets:
         JobRadar: all
         OrbitTasksWidget: all
+        OrbitWatchApp: all
     run:
       config: Debug
     test:
@@ -140,5 +174,13 @@ schemes:
         - JobRadar
       targets:
         - JobRadarTests
+    archive:
+      config: Release
+  OrbitWatchApp:
+    build:
+      targets:
+        OrbitWatchApp: all
+    run:
+      config: Debug
     archive:
       config: Release

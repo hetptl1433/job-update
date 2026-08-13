@@ -11,7 +11,7 @@ struct MainTabView: View {
                 .tabItem { Label("Home", systemImage: "house") }
                 .tag(AppState.Tab.home)
             TasksView()
-                .tabItem { Label("Tasks", systemImage: "checklist") }
+                .tabItem { Label("To Do", systemImage: "checklist") }
                 .tag(AppState.Tab.tasks)
             InboxView()
                 .tabItem { Label("Inbox", systemImage: "tray") }
@@ -24,12 +24,12 @@ struct MainTabView: View {
                 .tag(AppState.Tab.finance)
         }
         .tint(AppTheme.brand)
-        .sheet(isPresented: $app.voiceAssistantRequested) {
+        .sheet(item: $app.assistantLaunch) { launch in
             NavigationStack {
-                AssistantView(startsListening: true)
+                AssistantView(startsListening: launch == .voice)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") { app.voiceAssistantRequested = false }
+                            Button("Done") { app.assistantLaunch = nil }
                         }
                     }
             }

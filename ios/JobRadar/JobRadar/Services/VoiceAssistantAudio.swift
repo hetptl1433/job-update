@@ -6,10 +6,12 @@ import Speech
 /// Owns the short-lived audio session used by Orbit voice mode. Speech is
 /// transcribed locally when the current language supports on-device recognition.
 @MainActor
-final class VoiceAssistantAudio: NSObject, ObservableObject {
+final class VoiceAssistantAudio: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published private(set) var transcript = ""
     @Published private(set) var isListening = false
     @Published private(set) var isFinal = false
+    @Published private(set) var isSpeaking = false
+    @Published private(set) var completedSpeechCount = 0
     @Published private(set) var errorMessage: String?
 
     private let audioEngine = AVAudioEngine()
@@ -19,10 +21,16 @@ final class VoiceAssistantAudio: NSObject, ObservableObject {
     private var inputTapInstalled = false
     private var awaitingFinalResult = false
     private var silenceTask: Task<Void, Never>?
+    private var activeUtteranceID: ObjectIdentifier?
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
 
     func startListening() async {
         stopListening()
-        synthesizer.stopSpeaking(at: .immediate)
+        stopSpeaking()
         transcript = ""
         isFinal = false
         errorMessage = nil
@@ -35,9 +43,7 @@ final class VoiceAssistantAudio: NSObject, ObservableObject {
         }
 
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
-            try session.setActive(true)
+            try activateListeningSession()
 
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
@@ -95,17 +101,74 @@ final class VoiceAssistantAudio: NSObject, ObservableObject {
     func speak(_ text: String) {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
+
+        stopListening()
+        activeUtteranceID = nil
         synthesizer.stopSpeaking(at: .immediate)
+
+        do {
+            try activateSpeechSession()
+            errorMessage = nil
+        } catch {
+            isSpeaking = false
+            errorMessage = "Orbit wrote a reply, but audio playback couldn't start: \(error.localizedDescription)"
+            return
+        }
+
         let utterance = AVSpeechUtterance(string: clean)
-        utterance.voice = AVSpeechSynthesisVoice(
-            language: Locale.preferredLanguages.first ?? "en-US"
-        )
+        let preferredLanguage = Locale.preferredLanguages.first ?? "en-US"
+        utterance.voice = AVSpeechSynthesisVoice(language: preferredLanguage)
+            ?? AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.volume = 1
+        activeUtteranceID = ObjectIdentifier(utterance)
+        isSpeaking = true
         synthesizer.speak(utterance)
     }
 
     func stopSpeaking() {
+        activeUtteranceID = nil
         synthesizer.stopSpeaking(at: .immediate)
+        isSpeaking = false
+        deactivateAudioSession()
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didStart utterance: AVSpeechUtterance
+    ) {
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor [weak self] in
+            guard let self, self.activeUtteranceID == utteranceID else { return }
+            self.isSpeaking = true
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didFinish utterance: AVSpeechUtterance
+    ) {
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor [weak self] in
+            guard let self, self.activeUtteranceID == utteranceID else { return }
+            self.activeUtteranceID = nil
+            self.isSpeaking = false
+            self.deactivateAudioSession()
+            self.completedSpeechCount += 1
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer,
+        didCancel utterance: AVSpeechUtterance
+    ) {
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor [weak self] in
+            guard let self, self.activeUtteranceID == utteranceID else { return }
+            self.activeUtteranceID = nil
+            self.isSpeaking = false
+            self.deactivateAudioSession()
+        }
     }
 
     private func requestPermissions() async -> Bool {
@@ -169,6 +232,22 @@ final class VoiceAssistantAudio: NSObject, ObservableObject {
             inputTapInstalled = false
         }
         audioEngine.reset()
+    }
+
+    private func activateListeningSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(
+            .playAndRecord,
+            mode: .measurement,
+            options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers]
+        )
+        try session.setActive(true)
+    }
+
+    private func activateSpeechSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try session.setActive(true)
     }
 
     private func deactivateAudioSession() {

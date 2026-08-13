@@ -14,34 +14,6 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "9005D2F93B3B99CC91A0E2B1"
-               BuildableName = "Orbit.app"
-               BlueprintName = "JobRadar"
-               ReferencedContainer = "container:JobRadar.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "DE4156179A24898D4581C93D"
-               BuildableName = "OrbitTasksWidget.appex"
-               BlueprintName = "OrbitTasksWidget"
-               ReferencedContainer = "container:JobRadar.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
                BlueprintIdentifier = "62DF076E9D8E8CD291E700E9"
                BuildableName = "OrbitWatchApp.app"
                BlueprintName = "OrbitWatchApp"
@@ -54,39 +26,17 @@
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES"
-      codeCoverageEnabled = "YES"
-      onlyGenerateCoverageForSpecifiedTargets = "YES">
+      shouldUseLaunchSchemeArgsEnv = "YES">
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9005D2F93B3B99CC91A0E2B1"
-            BuildableName = "Orbit.app"
-            BlueprintName = "JobRadar"
+            BlueprintIdentifier = "62DF076E9D8E8CD291E700E9"
+            BuildableName = "OrbitWatchApp.app"
+            BlueprintName = "OrbitWatchApp"
             ReferencedContainer = "container:JobRadar.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
-      <CodeCoverageTargets>
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9005D2F93B3B99CC91A0E2B1"
-            BuildableName = "Orbit.app"
-            BlueprintName = "JobRadar"
-            ReferencedContainer = "container:JobRadar.xcodeproj">
-         </BuildableReference>
-      </CodeCoverageTargets>
       <Testables>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "DD1C28B7ABB860DD7281CCE1"
-               BuildableName = "JobRadarTests.xctest"
-               BlueprintName = "JobRadarTests"
-               ReferencedContainer = "container:JobRadar.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
@@ -103,9 +53,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9005D2F93B3B99CC91A0E2B1"
-            BuildableName = "Orbit.app"
-            BlueprintName = "JobRadar"
+            BlueprintIdentifier = "62DF076E9D8E8CD291E700E9"
+            BuildableName = "OrbitWatchApp.app"
+            BlueprintName = "OrbitWatchApp"
             ReferencedContainer = "container:JobRadar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -120,9 +70,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "9005D2F93B3B99CC91A0E2B1"
-            BuildableName = "Orbit.app"
-            BlueprintName = "JobRadar"
+            BlueprintIdentifier = "62DF076E9D8E8CD291E700E9"
+            BuildableName = "OrbitWatchApp.app"
+            BlueprintName = "OrbitWatchApp"
             ReferencedContainer = "container:JobRadar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

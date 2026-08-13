@@ -38,11 +38,11 @@ struct FinanceView: View {
             }
             .refreshable {
                 if finance.hasPendingHostedLink { await finance.resumeHostedLinkIfNeeded() }
-                else { await finance.load(showLoading: false) }
+                else { await finance.load(showLoading: false, forceRefresh: true) }
             }
             .task {
-                await finance.load()
                 if finance.hasPendingHostedLink { await finance.resumeHostedLinkIfNeeded() }
+                else { await finance.load() }
             }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active,
@@ -87,6 +87,8 @@ struct FinanceView: View {
                 switch route {
                 case .income:
                     IncomeView()
+                case .recurring:
+                    RecurringPaymentsView()
                 }
             }
         }
@@ -100,7 +102,10 @@ struct FinanceView: View {
                 .cardSurface()
         case .loaded(let overview):
             overviewContent(overview)
-        case .empty, .idle:
+        case .idle:
+            LoadingStateView(message: "Preparing your financial overview…")
+                .cardSurface()
+        case .empty:
             connectState
         case .failed(let message):
             InfoStateView(
@@ -110,7 +115,6 @@ struct FinanceView: View {
                 actionTitle: "Try again"
             ) { Task { await finance.load() } }
             .cardSurface()
-            connectButton(title: "Connect an institution")
         case .disconnected:
             if finance.isBackendConfigured { connectState } else { backendRequiredState }
         }
@@ -149,13 +153,60 @@ struct FinanceView: View {
 
     private func overviewContent(_ overview: FinanceOverview) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+            refreshStatus
             summaryGrid(overview)
             incomeDestination
             cashFlowCard(overview)
+            recurringPaymentsSection(overview)
+            spendingSection(overview)
             accountsSection(overview)
             transactionsSection(overview)
             institutionsSection(overview)
             privacyCard
+        }
+    }
+
+    @ViewBuilder
+    private var refreshStatus: some View {
+        if finance.isRefreshing {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                ProgressView().controlSize(.small)
+                Text("Updating connected accounts…")
+                Spacer()
+                if let snapshotDate = finance.snapshotDate {
+                    Text(snapshotDate.formatted(.relative(presentation: .named)))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(AppTheme.secondaryText)
+        } else if let message = finance.refreshError {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+                Image(systemName: "wifi.exclamationmark")
+                    .foregroundStyle(AppTheme.warning)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Showing your saved overview")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.primaryText)
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: AppTheme.Spacing.sm)
+                Button("Retry") {
+                    Task { await finance.load(showLoading: false, forceRefresh: true) }
+                }
+                .font(.caption.weight(.semibold))
+            }
+            .cardSurface(padding: AppTheme.Spacing.md)
+        } else if let snapshotDate = finance.snapshotDate {
+            Label(
+                "Updated \(snapshotDate.formatted(.relative(presentation: .named)))",
+                systemImage: "checkmark.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(AppTheme.secondaryText)
         }
     }
 
@@ -280,16 +331,130 @@ struct FinanceView: View {
         .cardSurface()
     }
 
-    private func accountsSection(_ overview: FinanceOverview) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: "Accounts", actionTitle: "Add", action: beginConnection)
-            VStack(spacing: 0) {
-                ForEach(Array(overview.accounts.enumerated()), id: \.element.id) { index, account in
-                    FinanceAccountRow(account: account)
-                    if index < overview.accounts.count - 1 { Divider().overlay(AppTheme.separator) }
+    private func recurringPaymentsSection(_ overview: FinanceOverview) -> some View {
+        let payments = overview.detectedRecurringPayments
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(
+                title: "Recurring payments",
+                actionTitle: payments.isEmpty ? nil : "See all",
+                action: payments.isEmpty ? nil : { app.financePath.append(.recurring) }
+            )
+
+            if payments.isEmpty {
+                HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+                    Image(systemName: "repeat")
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .frame(width: 34, height: 34)
+                        .background(AppTheme.secondarySurface, in: Circle())
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("No recurring charges detected yet")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppTheme.primaryText)
+                        Text("Orbit looks for consistent posted charges over time. New connections may need a few transaction cycles.")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
                 }
+                .cardSurface()
+            } else {
+                VStack(spacing: 0) {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("ESTIMATED EACH MONTH").sectionLabel()
+                            Text(money(overview.detectedMonthlyRecurringTotal, code: overview.currencyCode))
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(AppTheme.primaryText)
+                        }
+                        Spacer()
+                        Text("\(payments.count) active")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    .padding(AppTheme.Spacing.lg)
+
+                    Divider().overlay(AppTheme.separator)
+
+                    ForEach(Array(payments.prefix(3).enumerated()), id: \.element.id) { index, payment in
+                        FinanceRecurringPaymentRow(payment: payment)
+                        if index < min(payments.count, 3) - 1 {
+                            Divider().overlay(AppTheme.separator)
+                        }
+                    }
+                }
+                .cardSurface(padding: 0)
             }
-            .cardSurface(padding: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func spendingSection(_ overview: FinanceOverview) -> some View {
+        if !overview.topSpendingCategories.isEmpty {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                SectionHeader(title: "Spending this month")
+                VStack(spacing: AppTheme.Spacing.lg) {
+                    ForEach(overview.topSpendingCategories) { category in
+                        VStack(spacing: AppTheme.Spacing.sm) {
+                            HStack {
+                                Text(category.name)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(AppTheme.primaryText)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(money(category.amount, code: overview.currencyCode))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(AppTheme.primaryText)
+                                    .monospacedDigit()
+                            }
+                            GeometryReader { geometry in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(AppTheme.secondarySurface)
+                                    Capsule()
+                                        .fill(AppTheme.brandSecondary)
+                                        .frame(
+                                            width: max(
+                                                4,
+                                                geometry.size.width * CGFloat(min(max(category.share, 0), 1))
+                                            )
+                                        )
+                                }
+                            }
+                            .frame(height: 6)
+                        }
+                    }
+                }
+                .cardSurface()
+            }
+        }
+    }
+
+    private func accountsSection(_ overview: FinanceOverview) -> some View {
+        let bankAccounts = overview.accounts.filter { $0.group == .bank }
+        let creditCards = overview.accounts.filter { $0.group == .creditCards }
+        let otherAccounts = overview.accounts.filter { $0.group == .other }
+
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(title: "Accounts", actionTitle: "Add", action: beginConnection)
+
+            FinanceAccountsBox(
+                group: .bank,
+                accounts: bankAccounts,
+                overview: overview,
+                linksToInstitution: true
+            )
+            FinanceAccountsBox(
+                group: .creditCards,
+                accounts: creditCards,
+                overview: overview,
+                linksToInstitution: true
+            )
+            if !otherAccounts.isEmpty {
+                FinanceAccountsBox(
+                    group: .other,
+                    accounts: otherAccounts,
+                    overview: overview,
+                    linksToInstitution: true
+                )
+            }
         }
     }
 
@@ -321,28 +486,52 @@ struct FinanceView: View {
             SectionHeader(title: "Connections")
             VStack(spacing: 0) {
                 ForEach(Array(overview.institutions.enumerated()), id: \.element.id) { index, institution in
-                    HStack(spacing: AppTheme.Spacing.md) {
-                        Image(systemName: "building.columns")
-                            .frame(width: 32, height: 32)
-                            .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(institution.name).font(.subheadline.weight(.semibold))
-                            Text("\(institution.accountCount) account\(institution.accountCount == 1 ? "" : "s")")
-                                .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                    HStack(spacing: 0) {
+                        NavigationLink {
+                            FinanceInstitutionDetailView(
+                                institution: institution,
+                                initialOverview: overview
+                            )
+                        } label: {
+                            HStack(spacing: AppTheme.Spacing.md) {
+                                FinanceInstitutionMark(name: institution.name, size: 42)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(institution.name)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(AppTheme.primaryText)
+                                    Text("\(institution.accountCount) account\(institution.accountCount == 1 ? "" : "s")")
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                }
+                                Spacer(minLength: AppTheme.Spacing.sm)
+                                if institution.needsAttention {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(AppTheme.warning)
+                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(AppTheme.tertiaryText)
+                            }
+                            .padding(.leading, AppTheme.Spacing.lg)
+                            .padding(.vertical, AppTheme.Spacing.md)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
-                        Spacer()
-                        if institution.needsAttention {
-                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(AppTheme.warning)
-                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Shows only this institution's accounts and activity")
+
                         Menu {
                             Button("Disconnect", role: .destructive) {
                                 institutionToDisconnect = institution
                             }
                         } label: {
-                            Image(systemName: "ellipsis.circle").foregroundStyle(AppTheme.secondaryText)
+                            Image(systemName: "ellipsis.circle")
+                                .font(.body)
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .frame(width: 48, height: 48)
                         }
+                        .accessibilityLabel("Manage \(institution.name)")
                     }
-                    .padding(AppTheme.Spacing.lg)
                     if index < overview.institutions.count - 1 { Divider().overlay(AppTheme.separator) }
                 }
             }
@@ -476,13 +665,11 @@ private struct FinanceMetricCard: View {
 
 private struct FinanceAccountRow: View {
     var account: FinanceAccount
+    var showsDisclosure = false
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.md) {
-            Image(systemName: account.kind.systemImage)
-                .font(.subheadline)
-                .frame(width: 34, height: 34)
-                .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm))
+            FinanceInstitutionMark(name: account.institutionName, size: 36)
             VStack(alignment: .leading, spacing: 2) {
                 Text(account.maskedName).font(.subheadline.weight(.semibold)).lineLimit(1)
                 Text("\(account.institutionName) · \(account.kind.label)")
@@ -499,8 +686,356 @@ private struct FinanceAccountRow: View {
                         .font(.caption2).foregroundStyle(AppTheme.secondaryText)
                 }
             }
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(AppTheme.tertiaryText)
+            }
         }
         .padding(AppTheme.Spacing.lg)
+    }
+}
+
+private struct FinanceAccountsBox: View {
+    var group: FinanceAccountGroup
+    var accounts: [FinanceAccount]
+    var overview: FinanceOverview
+    var linksToInstitution: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Image(systemName: group.systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.secondaryText)
+                Text(group.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+                Spacer()
+                Text("\(accounts.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(AppTheme.secondarySurface, in: Capsule())
+            }
+            .padding(AppTheme.Spacing.lg)
+
+            Divider().overlay(AppTheme.separator)
+
+            if accounts.isEmpty {
+                Text(group.emptyMessage)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AppTheme.Spacing.lg)
+            } else {
+                ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
+                    accountRow(account)
+                    if index < accounts.count - 1 {
+                        Divider().overlay(AppTheme.separator)
+                    }
+                }
+            }
+        }
+        .cardSurface(padding: 0)
+    }
+
+    @ViewBuilder
+    private func accountRow(_ account: FinanceAccount) -> some View {
+        if linksToInstitution, let institution = overview.institution(for: account) {
+            NavigationLink {
+                FinanceInstitutionDetailView(
+                    institution: institution,
+                    initialOverview: overview
+                )
+            } label: {
+                FinanceAccountRow(account: account, showsDisclosure: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows only \(institution.name) accounts and activity")
+        } else {
+            FinanceAccountRow(account: account)
+        }
+    }
+}
+
+private struct FinanceInstitutionDetailView: View {
+    @EnvironmentObject private var finance: FinanceRepository
+
+    var institution: FinanceInstitution
+    var initialOverview: FinanceOverview
+
+    private var overview: FinanceOverview {
+        guard case .loaded(let latest) = finance.state,
+              latest.institutions.contains(where: { $0.id == institution.id }) else {
+            return initialOverview
+        }
+        return latest
+    }
+
+    private var displayedInstitution: FinanceInstitution {
+        overview.institutions.first(where: { $0.id == institution.id }) ?? institution
+    }
+
+    private var accounts: [FinanceAccount] {
+        overview.accounts(for: displayedInstitution)
+    }
+
+    private var transactions: [FinanceTransaction] {
+        overview.transactions(for: displayedInstitution)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                institutionHeader
+                accountSections
+                activitySection
+            }
+            .padding(AppTheme.Spacing.lg)
+        }
+        .background(AppTheme.background)
+        .navigationTitle(displayedInstitution.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await finance.load(showLoading: false, forceRefresh: true)
+        }
+    }
+
+    private var institutionHeader: some View {
+        HStack(spacing: AppTheme.Spacing.lg) {
+            FinanceInstitutionMark(name: displayedInstitution.name, size: 60)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayedInstitution.name)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(AppTheme.primaryText)
+                Text("\(accounts.count) connected account\(accounts.count == 1 ? "" : "s")")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText)
+                if displayedInstitution.needsAttention {
+                    Label("Connection needs attention", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.warning)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .cardSurface()
+    }
+
+    private var accountSections: some View {
+        let bankAccounts = accounts.filter { $0.group == .bank }
+        let creditCards = accounts.filter { $0.group == .creditCards }
+        let otherAccounts = accounts.filter { $0.group == .other }
+
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(title: "Accounts at \(displayedInstitution.name)")
+            FinanceAccountsBox(
+                group: .bank,
+                accounts: bankAccounts,
+                overview: overview,
+                linksToInstitution: false
+            )
+            FinanceAccountsBox(
+                group: .creditCards,
+                accounts: creditCards,
+                overview: overview,
+                linksToInstitution: false
+            )
+            if !otherAccounts.isEmpty {
+                FinanceAccountsBox(
+                    group: .other,
+                    accounts: otherAccounts,
+                    overview: overview,
+                    linksToInstitution: false
+                )
+            }
+        }
+    }
+
+    private var activitySection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(title: "\(displayedInstitution.name) activity")
+            if transactions.isEmpty {
+                Text("No recent transactions are available for this institution yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cardSurface()
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(transactions.prefix(30).enumerated()), id: \.element.id) { index, transaction in
+                        FinanceTransactionRow(transaction: transaction)
+                        if index < min(transactions.count, 30) - 1 {
+                            Divider().overlay(AppTheme.separator)
+                        }
+                    }
+                }
+                .cardSurface(padding: 0)
+            }
+        }
+    }
+}
+
+/// Compact institution artwork rendered entirely with SwiftUI text and vector
+/// shapes. This keeps marks sharp in dark mode, Dynamic Type, and future screen
+/// scales without shipping stock imagery or downloading remote assets.
+private struct FinanceInstitutionMark: View {
+    var name: String
+    var size: CGFloat
+
+    private var brand: FinanceInstitutionBrand {
+        FinanceInstitutionBrand(institutionName: name)
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                .fill(backgroundColor)
+
+            mark
+                .foregroundStyle(foregroundColor)
+        }
+        .frame(width: size, height: size)
+        .overlay {
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                .strokeBorder(borderColor, lineWidth: 1)
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var mark: some View {
+        switch brand {
+        case .chase:
+            ChaseInstitutionGlyph()
+                .frame(width: size * 0.52, height: size * 0.52)
+        case .americanExpress:
+            Text("AM\nEX")
+                .font(.system(size: size * 0.22, weight: .black, design: .rounded))
+                .multilineTextAlignment(.center)
+                .lineSpacing(-size * 0.07)
+        case .discover:
+            ZStack(alignment: .bottomTrailing) {
+                Text("DISC")
+                    .font(.system(size: size * 0.20, weight: .black, design: .rounded))
+                Circle()
+                    .fill(Color(hex: 0xF58220))
+                    .frame(width: size * 0.19, height: size * 0.19)
+                    .offset(x: size * 0.08, y: size * 0.05)
+            }
+        case .bankOfAmerica:
+            Text("BOA")
+                .font(.system(size: size * 0.22, weight: .black, design: .rounded))
+                .italic()
+        default:
+            Text(shortMark)
+                .font(.system(size: size * fontScale, weight: .black, design: .rounded))
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+        }
+    }
+
+    private var shortMark: String {
+        switch brand {
+        case .wellsFargo: "WF"
+        case .citi: "citi"
+        case .capitalOne: "C1"
+        case .usBank: "US"
+        case .pnc: "PNC"
+        case .truist: "T"
+        case .ally: "ally"
+        case .sofi: "SoFi"
+        case .fidelity: "F"
+        case .schwab: "SCH"
+        case .tdBank: "TD"
+        case .navyFederal: "NFCU"
+        case .fifthThird: "5/3"
+        case .citizens: "C"
+        case .paypal: "P"
+        case .venmo: "V"
+        case .generic: initials
+        case .chase, .americanExpress, .discover, .bankOfAmerica: ""
+        }
+    }
+
+    private var initials: String {
+        let words = name.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        if words.count > 1 {
+            return words.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+        }
+        return String(name.prefix(2)).uppercased()
+    }
+
+    private var fontScale: CGFloat {
+        shortMark.count > 3 ? 0.17 : 0.23
+    }
+
+    private var backgroundColor: Color {
+        switch brand {
+        case .chase: Color(hex: 0x117ACA)
+        case .americanExpress: Color(hex: 0x006FCF)
+        case .discover: Color(light: 0xFFFFFF, dark: 0xF4F4F6)
+        case .bankOfAmerica: Color(hex: 0xE31837)
+        case .wellsFargo: Color(hex: 0xD71E28)
+        case .citi: Color(hex: 0x056DAE)
+        case .capitalOne: Color(hex: 0x004977)
+        case .usBank: Color(hex: 0x0C2074)
+        case .pnc: Color(hex: 0xF58025)
+        case .truist: Color(hex: 0x2E1A47)
+        case .ally: Color(hex: 0x5B2D82)
+        case .sofi: Color(hex: 0x00A6A6)
+        case .fidelity: Color(hex: 0x368727)
+        case .schwab: Color(hex: 0x00A0DF)
+        case .tdBank: Color(hex: 0x2EAB40)
+        case .navyFederal: Color(hex: 0x003B70)
+        case .fifthThird: Color(hex: 0x005EB8)
+        case .citizens: Color(hex: 0x008555)
+        case .paypal: Color(hex: 0x003087)
+        case .venmo: Color(hex: 0x008CFF)
+        case .generic: AppTheme.secondarySurface
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch brand {
+        case .discover: Color(hex: 0x171717)
+        case .wellsFargo: Color(hex: 0xFFCD41)
+        case .generic: AppTheme.primaryText
+        default: .white
+        }
+    }
+
+    private var borderColor: Color {
+        brand == .discover || brand == .generic ? AppTheme.border : .clear
+    }
+}
+
+private struct ChaseInstitutionGlyph: View {
+    var body: some View {
+        ZStack {
+            ForEach(0..<4, id: \.self) { index in
+                ChaseInstitutionWedge()
+                    .rotationEffect(.degrees(Double(index) * 90))
+            }
+        }
+    }
+}
+
+private struct ChaseInstitutionWedge: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.width * 0.17, y: 0))
+        path.addLine(to: CGPoint(x: rect.width * 0.72, y: 0))
+        path.addLine(to: CGPoint(x: rect.width, y: rect.height * 0.28))
+        path.addLine(to: CGPoint(x: rect.width * 0.67, y: rect.height * 0.28))
+        path.addLine(to: CGPoint(x: rect.width * 0.50, y: rect.height * 0.12))
+        path.addLine(to: CGPoint(x: rect.width * 0.17, y: rect.height * 0.12))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -529,6 +1064,228 @@ private struct FinanceTransactionRow: View {
                 .monospacedDigit()
         }
         .padding(AppTheme.Spacing.lg)
+    }
+}
+
+private struct FinanceRecurringPaymentRow: View {
+    var payment: FinanceRecurringPayment
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.md) {
+            Image(systemName: systemImage)
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.primaryText)
+                .frame(width: 34, height: 34)
+                .background(AppTheme.secondarySurface, in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(payment.name)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(payment.cadence.label)
+                    if payment.isVariable { Text("· Variable") }
+                    if let nextExpectedDate = payment.nextExpectedDate {
+                        Text("· \(FinanceDateLabel.expected(nextExpectedDate))")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+                .lineLimit(1)
+            }
+            Spacer(minLength: AppTheme.Spacing.sm)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(payment.isVariable ? "~" : "")\(money(payment.amount))")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .monospacedDigit()
+                if payment.cadence != .monthly {
+                    Text("\(money(payment.monthlyAmount))/mo")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+        }
+        .padding(AppTheme.Spacing.lg)
+    }
+
+    private var systemImage: String {
+        let category = payment.category?.lowercased() ?? ""
+        if category.contains("entertainment") { return "play.rectangle" }
+        if category.contains("utilit") { return "bolt" }
+        if category.contains("telecommunication") { return "antenna.radiowaves.left.and.right" }
+        if category.contains("insurance") { return "shield" }
+        if category.contains("loan") { return "creditcard" }
+        return "repeat"
+    }
+
+    private func money(_ amount: Double) -> String {
+        amount.formatted(.currency(code: payment.currencyCode).precision(.fractionLength(0...2)))
+    }
+}
+
+private struct RecurringPaymentsView: View {
+    @EnvironmentObject private var finance: FinanceRepository
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                content
+            }
+            .padding(AppTheme.Spacing.lg)
+        }
+        .background(AppTheme.background)
+        .navigationTitle("Recurring")
+        .navigationBarTitleDisplayMode(.large)
+        .refreshable {
+            await finance.load(showLoading: false, forceRefresh: true)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch finance.state {
+        case .loaded(let overview):
+            let payments = overview.detectedRecurringPayments
+            if payments.isEmpty {
+                InfoStateView(
+                    systemImage: "repeat",
+                    title: "No recurring payments detected",
+                    message: "Orbit needs repeated posted charges before it can estimate a cadence. Pull to refresh after more activity arrives."
+                )
+                .cardSurface()
+            } else {
+                recurringSummary(overview, payments: payments)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    SectionHeader(title: "Expected payments")
+                    VStack(spacing: 0) {
+                        ForEach(Array(payments.enumerated()), id: \.element.id) { index, payment in
+                            FinanceRecurringPaymentRow(payment: payment)
+                            if index < payments.count - 1 {
+                                Divider().overlay(AppTheme.separator)
+                            }
+                        }
+                    }
+                    .cardSurface(padding: 0)
+                }
+                detectionNote
+            }
+        case .loading, .idle:
+            LoadingStateView(message: "Finding recurring payments…")
+                .cardSurface()
+        case .failed(let message):
+            InfoStateView(
+                systemImage: "exclamationmark.triangle",
+                title: "Couldn't load recurring payments",
+                message: message,
+                actionTitle: "Try again"
+            ) {
+                Task { await finance.load(forceRefresh: true) }
+            }
+            .cardSurface()
+        case .empty, .disconnected:
+            InfoStateView(
+                systemImage: "building.columns",
+                title: "Connect a financial account",
+                message: "Recurring payments are detected from the posted transactions in your connected accounts."
+            )
+            .cardSurface()
+        }
+    }
+
+    private func recurringSummary(
+        _ overview: FinanceOverview,
+        payments: [FinanceRecurringPayment]
+    ) -> some View {
+        let monthly = overview.detectedMonthlyRecurringTotal
+        let spendingShare = overview.monthlyOutflow > 0 ? monthly / overview.monthlyOutflow : 0
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            Text("RECURRING ESTIMATE").sectionLabel()
+            HStack(alignment: .firstTextBaseline) {
+                Text(money(monthly, code: overview.currencyCode))
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .minimumScaleFactor(0.7)
+                Text("/ month")
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.secondaryText)
+                Spacer()
+            }
+            Divider().overlay(AppTheme.separator)
+            HStack {
+                summaryValue("\(payments.count)", label: "Detected")
+                Spacer()
+                summaryValue(money(monthly * 12, code: overview.currencyCode), label: "Yearly pace")
+                if overview.monthlyOutflow > 0 {
+                    Spacer()
+                    summaryValue(
+                        spendingShare.formatted(.percent.precision(.fractionLength(0))),
+                        label: "Of spending"
+                    )
+                }
+            }
+        }
+        .cardSurface()
+    }
+
+    private func summaryValue(_ value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(AppTheme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+    }
+
+    private var detectionNote: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Label("How estimates work", systemImage: "sparkles")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppTheme.primaryText)
+            Text("Orbit detects repeated posted charges using timing and amount consistency. Variable bills and future dates are estimates; confirm the actual amount with the merchant before making a payment decision.")
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+        .cardSurface()
+    }
+
+    private func money(_ amount: Double, code: String) -> String {
+        amount.formatted(.currency(code: code).precision(.fractionLength(0...2)))
+    }
+}
+
+private enum FinanceDateLabel {
+    static func expected(_ value: String) -> String {
+        guard let date = parse(value) else { return value }
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: .now)
+        let target = calendar.startOfDay(for: date)
+        let days = calendar.dateComponents([.day], from: start, to: target).day ?? 0
+        switch days {
+        case Int.min ..< 0:
+            return target.formatted(.dateTime.month(.abbreviated).day())
+        case 0:
+            return "Expected today"
+        case 1:
+            return "Expected tomorrow"
+        case 2...14:
+            return "Expected in \(days) days"
+        default:
+            return "Expected \(target.formatted(.dateTime.month(.abbreviated).day()))"
+        }
+    }
+
+    private static func parse(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: value)
     }
 }
 

@@ -1,20 +1,11 @@
 import SwiftUI
 
 struct TasksView: View {
-    private enum Mode: String, CaseIterable, Identifiable {
-        case tasks = "To Do"
-        case reminders = "Reminders"
-        var id: String { rawValue }
-    }
-
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var tasks: TaskRepository
-    @EnvironmentObject private var reminders: ReminderRepository
     @State private var editing: TaskItem?
-    @State private var editingReminder: ReminderItem?
     @State private var showingCompleted = false
     @State private var searchText = ""
-    @State private var mode: Mode = .tasks
 
     private var open: [TaskItem] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -27,31 +18,24 @@ struct TasksView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                    Picker("Type", selection: $mode) {
-                        ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                    if let error = tasks.calendarSyncError {
+                        Label(error, systemImage: "calendar.badge.exclamationmark")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
                     }
-                    .pickerStyle(.segmented)
-
-                    if mode == .tasks {
-                        taskSection("To do", items: open)
-                        if !tasks.suggestions.isEmpty { suggestionsSection }
-                        if !tasks.completed.isEmpty { completedSection }
-                    } else {
-                        remindersSection
-                    }
+                    taskSection("To Do", items: open)
+                    if !tasks.suggestions.isEmpty { suggestionsSection }
+                    if !tasks.completed.isEmpty { completedSection }
                 }
                 .padding(AppTheme.Spacing.lg)
             }
             .background(AppTheme.background)
-            .navigationTitle("Tasks")
-            .searchable(text: $searchText, prompt: "Search tasks")
+            .navigationTitle("To Do")
+            .searchable(text: $searchText, prompt: "Search To Do")
             .refreshable { await app.refreshTasks() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        if mode == .tasks { editing = TaskItem(title: "") }
-                        else { editingReminder = ReminderItem(title: "", fireDate: .now.addingTimeInterval(3_600)) }
-                    } label: { Image(systemName: "plus") }
+                    Button { editing = TaskItem(title: "") } label: { Image(systemName: "plus") }
                         .tint(AppTheme.primaryText)
                 }
             }
@@ -61,32 +45,15 @@ struct TasksView: View {
                     else { tasks.add(saved) }
                 }
             }
-            .sheet(item: $editingReminder) { item in
-                ReminderEditor(item: item) { saved in
-                    if reminders.reminders.contains(where: { $0.id == saved.id }) { reminders.update(saved) }
-                    else { reminders.add(saved) }
-                    Task { await app.refreshCalendar(presentErrors: false) }
-                }
-            }
             .onAppear {
                 tasks.reload()
-                reminders.reload()
                 openDeepLinkedTask()
-                openDeepLinkedReminder()
             }
             .onChange(of: tasks.openTaskID) { _, _ in openDeepLinkedTask() }
-            .onChange(of: reminders.openReminderID) { _, _ in openDeepLinkedReminder() }
             .onChange(of: tasks.createTaskRequested) { _, requested in
                 guard requested else { return }
-                mode = .tasks
                 editing = TaskItem(title: "")
                 tasks.createTaskRequested = false
-            }
-            .onChange(of: reminders.createReminderRequested) { _, requested in
-                guard requested else { return }
-                mode = .reminders
-                editingReminder = ReminderItem(title: "", fireDate: .now.addingTimeInterval(3_600))
-                reminders.createReminderRequested = false
             }
         }
     }
@@ -161,41 +128,8 @@ struct TasksView: View {
         .tint(AppTheme.secondaryText)
     }
 
-    private var remindersSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-            SectionHeader(title: "Upcoming reminders")
-            if let error = reminders.calendarSyncError {
-                Label(error, systemImage: "calendar.badge.exclamationmark")
-                    .font(.caption).foregroundStyle(AppTheme.secondaryText)
-            }
-            if reminders.open.isEmpty {
-                InfoStateView(
-                    systemImage: "bell",
-                    title: "No reminders",
-                    message: "Reminders are separate from To Do and sync with Apple Calendar.",
-                    actionTitle: "Add reminder"
-                ) { editingReminder = ReminderItem(title: "", fireDate: .now.addingTimeInterval(3_600)) }
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(reminders.open.enumerated()), id: \.element.id) { index, item in
-                        ReminderRow(item: item, onToggle: { reminders.toggle(item) })
-                            .contentShape(Rectangle())
-                            .onTapGesture { editingReminder = item }
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) { reminders.delete(item) } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                            }
-                        if index < reminders.open.count - 1 { Divider().overlay(AppTheme.separator) }
-                    }
-                }
-            }
-        }
-    }
-
     private func openDeepLinkedTask() {
         if tasks.createTaskRequested {
-            mode = .tasks
             editing = TaskItem(title: "")
             tasks.createTaskRequested = false
             return
@@ -204,20 +138,6 @@ struct TasksView: View {
               let item = tasks.tasks.first(where: { $0.id == id }) else { return }
         editing = item
         tasks.openTaskID = nil
-    }
-
-    private func openDeepLinkedReminder() {
-        if reminders.createReminderRequested {
-            mode = .reminders
-            editingReminder = ReminderItem(title: "", fireDate: .now.addingTimeInterval(3_600))
-            reminders.createReminderRequested = false
-            return
-        }
-        guard let id = reminders.openReminderID,
-              let item = reminders.reminders.first(where: { $0.id == id }) else { return }
-        mode = .reminders
-        editingReminder = item
-        reminders.openReminderID = nil
     }
 }
 
@@ -282,11 +202,25 @@ struct TaskEditor: View {
                     TextField("Notes", text: $item.notes, axis: .vertical).lineLimit(2...6)
                 }
                 Section("Schedule") {
-                    Toggle("Due date", isOn: $hasDueDate)
+                    Toggle("Add date & time", isOn: Binding(
+                        get: { hasDueDate },
+                        set: { enabled in
+                            hasDueDate = enabled
+                            if enabled, item.dueDate == nil {
+                                item.dueDate = Calendar.current.date(
+                                    byAdding: .hour,
+                                    value: 1,
+                                    to: .now
+                                ) ?? .now.addingTimeInterval(3_600)
+                            } else if !enabled {
+                                item.dueDate = nil
+                            }
+                        }
+                    ))
                     if hasDueDate {
                         DatePicker("Due", selection: Binding(
                             get: { item.dueDate ?? .now }, set: { item.dueDate = $0 }
-                        ))
+                        ), displayedComponents: [.date, .hourAndMinute])
                         Picker("Alert", selection: Binding(
                             get: { item.effectiveAlertStyle },
                             set: { item.alertStyle = $0 }
@@ -295,8 +229,8 @@ struct TaskEditor: View {
                         }
                     }
                     Text(hasDueDate
-                         ? "Timed To Dos are added to Apple Calendar. Alarm is the default; on iOS 17–25 it falls back to a sound notification."
-                         : "Without a time, this stays only in your To Do list.")
+                         ? "This To Do will create one linked Apple Calendar event. Alarm is the default; on iOS 17–25 it falls back to a sound notification."
+                         : "Without a date and time, this stays only in your To Do list.")
                         .font(.caption).foregroundStyle(AppTheme.secondaryText)
                 }
                 Section("Priority") {
@@ -309,90 +243,22 @@ struct TaskEditor: View {
                     Section("Source") { LabeledContent("Created from", value: item.source.label) }
                 }
             }
-            .navigationTitle(item.title.isEmpty ? "New Task" : "Edit Task")
+            .navigationTitle(item.title.isEmpty ? "New To Do" : "Edit To Do")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if !hasDueDate { item.dueDate = nil }
+                        if hasDueDate, item.dueDate == nil {
+                            item.dueDate = .now.addingTimeInterval(3_600)
+                        }
                         let needsCalendarAccess = hasDueDate && !app.connections.appleCalendarConnected
                         onSave(item); dismiss()
                         if needsCalendarAccess { Task { await app.connectAppleCalendar() } }
                     }
                     .fontWeight(.semibold)
                     .disabled(item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-    }
-}
-
-private struct ReminderRow: View {
-    let item: ReminderItem
-    let onToggle: () -> Void
-
-    var body: some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            Button(action: onToggle) {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(item.isCompleted ? AppTheme.success : AppTheme.primaryText)
-            }
-            .buttonStyle(.plain)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
-                Text(item.fireDate.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption).foregroundStyle(AppTheme.secondaryText)
-            }
-            Spacer()
-            Image(systemName: alertSystemImage)
-                .font(.caption).foregroundStyle(AppTheme.tertiaryText)
-        }
-        .padding(.vertical, AppTheme.Spacing.md)
-    }
-
-    private var alertSystemImage: String {
-        switch item.effectiveAlertStyle {
-        case .alarm: "alarm"
-        case .notification: "bell"
-        case .none: "bell.slash"
-        }
-    }
-}
-
-private struct ReminderEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @State var item: ReminderItem
-    let onSave: (ReminderItem) -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Reminder") {
-                    TextField("Remind me to…", text: $item.title, axis: .vertical)
-                    TextField("Notes", text: $item.notes, axis: .vertical).lineLimit(2...5)
-                    DatePicker("Date and time", selection: $item.fireDate)
-                    Picker("Alert", selection: Binding(
-                        get: { item.effectiveAlertStyle },
-                        set: { item.alertStyle = $0 }
-                    )) {
-                        ForEach(TaskAlertStyle.allCases) { Text($0.label).tag($0) }
-                    }
-                }
-                Section {
-                    Label("This reminder creates one linked Apple Calendar event. Moving or renaming that event updates the reminder.", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption).foregroundStyle(AppTheme.secondaryText)
-                }
-            }
-            .navigationTitle(item.title.isEmpty ? "New Reminder" : "Edit Reminder")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave(item); dismiss() }
-                        .fontWeight(.semibold)
-                        .disabled(item.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }

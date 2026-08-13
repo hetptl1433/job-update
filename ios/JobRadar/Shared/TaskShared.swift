@@ -27,8 +27,8 @@ enum TaskAlertStyle: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Orbit owns task state. Apple Reminders can be added later as an adapter,
-/// without changing this provider-neutral model or making it the source of truth.
+/// Orbit's single To Do model. Items without a date stay local; adding a date
+/// and time makes the same item eligible for alerts and Apple Calendar sync.
 struct TaskItem: Codable, Identifiable, Hashable, Sendable {
     var id: UUID
     var title: String
@@ -95,8 +95,8 @@ struct TaskItem: Codable, Identifiable, Hashable, Sendable {
     var effectiveAlertStyle: TaskAlertStyle { alertStyle ?? .alarm }
 }
 
-/// A Reminder is intentionally distinct from a Task. Reminders always have a
-/// fire time; a Task only becomes scheduled when the user gives it a due time.
+/// Legacy storage model retained only so existing Reminder data can be migrated
+/// into `TaskItem` after the unified To Do experience ships.
 struct ReminderItem: Codable, Identifiable, Hashable, Sendable {
     var id: UUID
     var title: String
@@ -140,6 +140,7 @@ struct ReminderItem: Codable, Identifiable, Hashable, Sendable {
 enum SharedTaskStore {
     static let appGroupID = "group.com.hetpatel.jobradar"
     static let storageKey = "orbit.tasks.v1"
+    private static let reminderMigrationKey = "orbit.tasks.reminderMigration.v1"
 
     static func load() -> [TaskItem] {
         guard let data = defaults.data(forKey: storageKey),
@@ -175,6 +176,48 @@ enum SharedTaskStore {
                 }
                 return lhs.updatedAt > rhs.updatedAt
             }
+    }
+
+    /// One-time, lossless migration from the former separate Reminder list.
+    /// IDs and linked Apple Calendar identifiers are retained so old deep links,
+    /// alerts, and calendar events continue to resolve to the unified To Do.
+    @discardableResult
+    static func migrateLegacyRemindersIfNeeded() -> [TaskItem] {
+        guard !defaults.bool(forKey: reminderMigrationKey) else { return [] }
+        let reminders = SharedReminderStore.load()
+        let existing = load()
+        let merged = merging(existing, with: reminders)
+        let migratedIDs = Set(merged.map(\.id)).subtracting(Set(existing.map(\.id)))
+        let migrated = merged.filter { migratedIDs.contains($0.id) }
+
+        guard save(merged) else { return [] }
+        _ = SharedReminderStore.save([])
+        defaults.set(true, forKey: reminderMigrationKey)
+        return migrated
+    }
+
+    /// Pure merge used by the migration and unit tests. Existing To Dos win an
+    /// unlikely UUID collision so migration can never overwrite current data.
+    static func merging(_ tasks: [TaskItem], with reminders: [ReminderItem]) -> [TaskItem] {
+        var result = tasks
+        var existingIDs = Set(tasks.map(\.id))
+        for reminder in reminders where !existingIDs.contains(reminder.id) {
+            result.append(TaskItem(
+                id: reminder.id,
+                title: reminder.title,
+                notes: reminder.notes,
+                dueDate: reminder.fireDate,
+                priority: .normal,
+                isCompleted: reminder.isCompleted,
+                createdAt: reminder.createdAt,
+                updatedAt: reminder.updatedAt,
+                source: .manual,
+                appleCalendarEventID: reminder.relatedCalendarEventID,
+                alertStyle: reminder.alertStyle
+            ))
+            existingIDs.insert(reminder.id)
+        }
+        return result
     }
 
     private static var defaults: UserDefaults {

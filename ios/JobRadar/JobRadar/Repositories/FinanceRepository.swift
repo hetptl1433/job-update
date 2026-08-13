@@ -6,21 +6,42 @@ import Foundation
 /// Plaid secret or Item access token.
 @MainActor
 final class FinanceRepository: ObservableObject {
-    @Published private(set) var state: LoadState<FinanceOverview> = .disconnected
+    @Published private(set) var state: LoadState<FinanceOverview> = .idle
     @Published private(set) var incomeState: LoadState<IncomeOverview> = .disconnected
     @Published private(set) var isConnecting = false
+    @Published private(set) var isRefreshing = false
     @Published private(set) var hostedLinkNotice: String?
+    @Published private(set) var refreshError: String?
+    @Published private(set) var snapshotDate: Date?
 
     private let api: any FinanceDataProviding
     private let auth: AuthenticationManager
     private let defaults: UserDefaults
+    private let snapshotStore: ProtectedSnapshotStore<FinanceOverview>
+    private var lastNetworkRefreshAt: Date?
 
     private static let pendingHostedLinkKey = "orbit.finance.pendingHostedLink"
+    private static let automaticRefreshInterval: TimeInterval = 120
 
-    init(api: any FinanceDataProviding, auth: AuthenticationManager, defaults: UserDefaults = .standard) {
+    init(
+        api: any FinanceDataProviding,
+        auth: AuthenticationManager,
+        defaults: UserDefaults = .standard,
+        snapshotStore: ProtectedSnapshotStore<FinanceOverview>? = nil
+    ) {
         self.api = api
         self.auth = auth
         self.defaults = defaults
+        self.snapshotStore = snapshotStore
+            ?? ProtectedSnapshotStore(filename: "orbit-finance-overview-v1.json")
+
+        if let snapshot = self.snapshotStore.load(ownerID: UserSession.restore()?.userID) {
+            state = snapshot.value.accounts.isEmpty ? .empty : .loaded(snapshot.value)
+            snapshotDate = snapshot.savedAt
+            lastNetworkRefreshAt = snapshot.savedAt
+        } else if !api.isConfigured {
+            state = .disconnected
+        }
     }
 
     var isBackendConfigured: Bool { api.isConfigured }
@@ -29,25 +50,57 @@ final class FinanceRepository: ObservableObject {
     var isConnected: Bool { !(overview?.accounts.isEmpty ?? true) }
     var hasPendingHostedLink: Bool { pendingHostedLinkID != nil }
 
-    func load(showLoading: Bool = true) async {
+    func load(showLoading: Bool = true, forceRefresh: Bool = false) async {
         guard api.isConfigured else {
             state = .disconnected
             incomeState = .disconnected
             return
         }
+        guard !isRefreshing else { return }
+        if !forceRefresh,
+           let lastNetworkRefreshAt,
+           Date().timeIntervalSince(lastNetworkRefreshAt) < Self.automaticRefreshInterval {
+            if isConnected, incomeState.value == nil {
+                await loadIncome(showLoading: false)
+            }
+            return
+        }
+
+        let stateBeforeRefresh = state
+        let incomeStateBeforeRefresh = incomeState
         if showLoading, state.value == nil { state = .loading }
+        isRefreshing = true
+        refreshError = nil
+        defer { isRefreshing = false }
+
         do {
             await refreshBackendIdentity()
+
+            // A stored backend read model is much faster than waiting for every
+            // Plaid Item to sync. Use it to paint the screen first when this
+            // device has no local snapshot, then refresh accounts in place.
+            if stateBeforeRefresh.value == nil {
+                if let overview = try? await api.fetchFinanceOverview() {
+                    apply(overview)
+                }
+            }
+
             let overview = try await api.syncFinanceOverview()
-            state = overview.accounts.isEmpty ? .empty : .loaded(overview)
-            if overview.accounts.isEmpty {
-                incomeState = .empty
-            } else {
+            apply(overview)
+            lastNetworkRefreshAt = .now
+            if !overview.accounts.isEmpty {
                 await loadIncome(showLoading: incomeState.value == nil)
             }
+        } catch is CancellationError {
+            if case .loading = state { state = stateBeforeRefresh }
+            if case .loading = incomeState { incomeState = incomeStateBeforeRefresh }
         } catch {
-            state = .failed(error.localizedDescription)
-            incomeState = .failed(error.localizedDescription)
+            if state.value != nil {
+                refreshError = error.localizedDescription
+            } else {
+                state = .failed(error.localizedDescription)
+                incomeState = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -148,7 +201,8 @@ final class FinanceRepository: ObservableObject {
                 switch result.status {
                 case .complete:
                     pendingHostedLinkID = nil
-                    await load(showLoading: false)
+                    lastNetworkRefreshAt = nil
+                    await load(showLoading: false, forceRefresh: true)
                     return
                 case .exited:
                     pendingHostedLinkID = nil
@@ -174,7 +228,7 @@ final class FinanceRepository: ObservableObject {
 
             // Keep the ID so a later foreground/refresh can check again. The
             // webhook may still be completing, and that is not a user error.
-            await load(showLoading: false)
+            await load(showLoading: false, forceRefresh: true)
         } catch is CancellationError {
             // App moved back to the background; keep the pending ID for later.
         } catch {
@@ -186,18 +240,35 @@ final class FinanceRepository: ObservableObject {
         hostedLinkNotice = nil
     }
 
+    func clearRefreshError() {
+        refreshError = nil
+    }
+
     func disconnect(itemID: String) async throws {
         await refreshBackendIdentity()
         _ = try await api.disconnectFinanceConnection(itemID)
-        await load(showLoading: false)
+        lastNetworkRefreshAt = nil
+        await load(showLoading: false, forceRefresh: true)
     }
 
     func clear() {
         state = .disconnected
         incomeState = .disconnected
         isConnecting = false
+        isRefreshing = false
         hostedLinkNotice = nil
+        refreshError = nil
+        snapshotDate = nil
+        lastNetworkRefreshAt = nil
         pendingHostedLinkID = nil
+        snapshotStore.remove()
+    }
+
+    private func apply(_ overview: FinanceOverview) {
+        state = overview.accounts.isEmpty ? .empty : .loaded(overview)
+        incomeState = overview.accounts.isEmpty ? .empty : incomeState
+        snapshotDate = .now
+        snapshotStore.save(overview, ownerID: UserSession.restore()?.userID)
     }
 
     private var pendingHostedLinkID: String? {

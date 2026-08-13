@@ -130,9 +130,18 @@ connect it during onboarding or in Settings. OpenAI API billing is separate from
 ChatGPT Plus. The model defaults to `gpt-4o-mini` and can be changed with the
 `OpenAIModel` Info.plist value.
 
+Orbit Chat's **Live conversation** uses the OpenAI Realtime API with
+`gpt-realtime-2.1` by default (`OpenAIRealtimeModel` overrides it). It streams
+24 kHz microphone audio and native model speech over one continuous session,
+shows transcript bubbles as turns complete, and seeds a new session with the
+protected on-device conversation plus the current privacy-filtered Orbit data
+snapshot. Finance details are included only when the user has enabled Finance
+sharing for the assistant.
+
 Do **not** distribute a build that asks users to put an OpenAI key on the phone.
 Before TestFlight/App Store distribution, add a backend endpoint that holds
-`OPENAI_API_KEY` server-side and replace the `OpenAIClient` implementation with a
+`OPENAI_API_KEY` server-side, mint short-lived Realtime client credentials, and
+move the mobile live transport to WebRTC. Also replace `OpenAIClient` with a
 backend-backed assistant/email-analysis service. Mobile applications cannot
 guarantee that an embedded or locally entered provider secret is safe.
 

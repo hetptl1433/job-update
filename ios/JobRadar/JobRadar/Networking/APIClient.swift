@@ -227,6 +227,7 @@ protocol FinanceDataProviding: AnyObject {
     var isConfigured: Bool { get }
     func createFinanceConnection() async throws -> PlaidHostedLinkLaunch
     func fetchFinanceConnectionStatus(connectionID: String) async throws -> PlaidHostedLinkStatus
+    func fetchFinanceOverview() async throws -> FinanceOverview
     func syncFinanceOverview() async throws -> FinanceOverview
     func disconnectFinanceConnection(_ connectionID: String) async throws -> Bool
     func fetchIncomeOverview(asOfDate: String, timeZone: String) async throws -> IncomeOverview
