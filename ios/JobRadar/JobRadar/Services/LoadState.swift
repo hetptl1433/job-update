@@ -53,35 +53,58 @@ final class ProtectedSnapshotStore<Value: Codable> {
         return Snapshot(value: envelope.value, savedAt: envelope.savedAt)
     }
 
-    func save(_ value: Value, ownerID: String?) {
-        guard let ownerID, !ownerID.isEmpty else { return }
+    /// Returns true only after the atomic file write succeeds. Callers that use
+    /// a snapshot as a processing ledger can therefore avoid advancing a cursor
+    /// when its corresponding derived data was not durably saved.
+    @discardableResult
+    func save(_ value: Value, ownerID: String?) -> Bool {
+        guard let ownerID, !ownerID.isEmpty else { return false }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(Envelope(ownerID: ownerID, savedAt: .now, value: value)) else {
-            return
+            return false
         }
 
+        let directory = fileURL.deletingLastPathComponent()
+        let temporaryURL = directory.appendingPathComponent(
+            ".\(fileURL.lastPathComponent).\(UUID().uuidString).tmp"
+        )
         do {
             try fileManager.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
+                at: directory,
                 withIntermediateDirectories: true
             )
-            try data.write(to: fileURL, options: [.atomic])
-            try? fileManager.setAttributes(
+            try data.write(to: temporaryURL, options: [.atomic])
+            try fileManager.setAttributes(
                 [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-                ofItemAtPath: fileURL.path
+                ofItemAtPath: temporaryURL.path
             )
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
-            var mutableURL = fileURL
-            try? mutableURL.setResourceValues(values)
+            var mutableURL = temporaryURL
+            try mutableURL.setResourceValues(values)
+            if fileManager.fileExists(atPath: fileURL.path) {
+                _ = try fileManager.replaceItemAt(fileURL, withItemAt: temporaryURL)
+            } else {
+                try fileManager.moveItem(at: temporaryURL, to: fileURL)
+            }
+            return true
         } catch {
-            // A cache miss is always recoverable from the source service.
+            try? fileManager.removeItem(at: temporaryURL)
+            // Callers decide whether this is a recoverable cache miss or a
+            // durability failure that must block advancing source state.
+            return false
         }
     }
 
-    func remove() {
-        guard fileManager.fileExists(atPath: fileURL.path) else { return }
-        try? fileManager.removeItem(at: fileURL)
+    @discardableResult
+    func remove() -> Bool {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return true }
+        do {
+            try fileManager.removeItem(at: fileURL)
+            return true
+        } catch {
+            return false
+        }
     }
 }

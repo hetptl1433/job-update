@@ -63,7 +63,8 @@ final class JobRepository: ObservableObject {
 
     /// Apply an AI-detected update: update the matching company or create a new
     /// application. Called only after the user confirms (audit trail).
-    func applyDetected(_ update: DetectedJobUpdate) {
+    @discardableResult
+    func applyDetected(_ update: DetectedJobUpdate) -> Bool {
         let all = (try? context.fetch(FetchDescriptor<JobApplication>())) ?? []
         if let existing = bestMatch(for: update, in: all) {
             // Multiple emails can describe the same application. Never let an
@@ -83,7 +84,7 @@ final class JobRepository: ObservableObject {
             if let source = update.sourceMessageID { job.relatedEmailThreadIDs = [source] }
             context.insert(job)
         }
-        _ = saveLocal()
+        return saveLocal()
     }
 
     func touch(_ application: JobApplication) {

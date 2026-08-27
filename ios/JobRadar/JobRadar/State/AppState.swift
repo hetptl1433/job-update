@@ -84,6 +84,7 @@ final class AppState: ObservableObject {
     @Published private(set) var lastSyncSummary: String?
     @Published private(set) var lastSyncedAt: Date?
     @Published private(set) var calendarState: LoadState<[CalendarEvent]> = .disconnected
+    private var emailScanGeneration = 0
 
     // Service layer
     let auth: AuthenticationManager
@@ -94,6 +95,8 @@ final class AppState: ObservableObject {
     let calendar: CalendarRepository
     let finance: FinanceRepository
     let assistant: AssistantService
+    let assistantMemory: AssistantMemoryRepository
+    let emailScanHistory: EmailScanHistoryStore
     let health: HealthRepository
     let automations: AutomationService
     let notifications = NotificationManager.shared
@@ -125,6 +128,8 @@ final class AppState: ObservableObject {
         self.calendar = CalendarRepository()
         self.finance = FinanceRepository(api: financeAPI, auth: auth)
         self.assistant = LiveAssistantService()
+        self.assistantMemory = AssistantMemoryRepository()
+        self.emailScanHistory = EmailScanHistoryStore()
         self.health = HealthRepository()
         self.automations = AutomationService()
 
@@ -152,6 +157,18 @@ final class AppState: ObservableObject {
         } else {
             phase = .signedOut
         }
+        consumePendingLaunchRequest()
+    }
+
+    /// System launch intents run outside the main app process. Consume their
+    /// app-group request after state restoration and on every foreground entry.
+    func consumePendingLaunchRequest() {
+        guard let target = OrbitPendingLaunchStore.consume() else { return }
+        switch target {
+        case .voice:
+            selectedTab = .home
+            assistantLaunch = .voice
+        }
     }
 
     // MARK: Authentication (single identity)
@@ -174,6 +191,26 @@ final class AppState: ObservableObject {
     }
 
     func signOut() {
+        let historyErased = emailScanHistory.eraseOwnerData()
+        let inboxErased = inbox.eraseStoredSnapshot()
+        guard historyErased, inboxErased else {
+            alert = AppAlert(
+                title: "Couldn't clear local email data",
+                message: "Orbit signed you out, but couldn't remove every protected email file. Sign in to the same account and try again."
+            )
+            emailScanGeneration += 1
+            isSyncing = false
+            syncStageMessage = nil
+            gmailAccounts.forEach { auth.forgetGoogleAccount($0.userID) }
+            outlookAccounts.forEach { microsoftAuth.removeAccount($0.providerAccountID) }
+            if let user { auth.forgetGoogleAccount(user.userID) }
+            auth.signOut()
+            resetSignedOut(clearSetup: false)
+            return
+        }
+        emailScanGeneration += 1
+        isSyncing = false
+        syncStageMessage = nil
         gmailAccounts.forEach { auth.forgetGoogleAccount($0.userID) }
         outlookAccounts.forEach { microsoftAuth.removeAccount($0.providerAccountID) }
         if let user { auth.forgetGoogleAccount(user.userID) }
@@ -182,6 +219,24 @@ final class AppState: ObservableObject {
     }
 
     func disconnectAccount() async {
+        let memoryErased = assistantMemory.eraseOwnerData()
+        let historyErased = emailScanHistory.eraseOwnerData()
+        let inboxErased = inbox.eraseStoredSnapshot()
+        guard memoryErased, historyErased, inboxErased else {
+            alert = AppAlert(
+                title: "Couldn't delete local AI data",
+                message: "Orbit signed you out, but couldn't remove every protected memory or email file. Sign in to the same account and try Disconnect Account again."
+            )
+            gmailAccounts.forEach { auth.forgetGoogleAccount($0.userID) }
+            outlookAccounts.forEach { microsoftAuth.removeAccount($0.providerAccountID) }
+            if let user { auth.forgetGoogleAccount(user.userID) }
+            auth.signOut()
+            resetSignedOut(clearSetup: false)
+            return
+        }
+        emailScanGeneration += 1
+        isSyncing = false
+        syncStageMessage = nil
         gmailAccounts.forEach { auth.forgetGoogleAccount($0.userID) }
         outlookAccounts.forEach { microsoftAuth.removeAccount($0.providerAccountID) }
         if let user { auth.forgetGoogleAccount(user.userID) }
@@ -241,6 +296,18 @@ final class AppState: ObservableObject {
     }
 
     func removeGmailAccount(_ account: EmailAccount) {
+        emailScanGeneration += 1
+        isSyncing = false
+        syncStageMessage = nil
+        let historyCleanupSaved = emailScanHistory.removeAccount(account)
+        let inboxCleanupSaved = inbox.removeMessages(for: account)
+        guard historyCleanupSaved, inboxCleanupSaved else {
+            alert = AppAlert(
+                title: "Couldn't disconnect mailbox",
+                message: "Orbit couldn't durably clear this mailbox's local email data. The account remains connected so you can try again."
+            )
+            return
+        }
         emailAccounts.removeAll { $0.provider == .gmail && $0.userID == account.userID }
         if account.userID == user?.userID {
             // The Google identity remains signed in; only Gmail reading is off.
@@ -249,6 +316,7 @@ final class AppState: ObservableObject {
             auth.forgetGoogleAccount(account.userID)
         }
         persistEmailAccounts()
+        rebuildTaskSuggestions()
         updateEmailConnectionState()
     }
 
@@ -275,9 +343,22 @@ final class AppState: ObservableObject {
     }
 
     func removeOutlookAccount(_ account: EmailAccount) {
+        emailScanGeneration += 1
+        isSyncing = false
+        syncStageMessage = nil
+        let historyCleanupSaved = emailScanHistory.removeAccount(account)
+        let inboxCleanupSaved = inbox.removeMessages(for: account)
+        guard historyCleanupSaved, inboxCleanupSaved else {
+            alert = AppAlert(
+                title: "Couldn't disconnect mailbox",
+                message: "Orbit couldn't durably clear this mailbox's local email data. The account remains connected so you can try again."
+            )
+            return
+        }
         microsoftAuth.removeAccount(account.providerAccountID)
         emailAccounts.removeAll { $0.provider == .outlook && $0.providerAccountID == account.providerAccountID }
         persistEmailAccounts()
+        rebuildTaskSuggestions()
         updateEmailConnectionState()
         if outlookAccounts.isEmpty { disconnectCalendarProvider(.outlook) }
     }
@@ -465,6 +546,9 @@ final class AppState: ObservableObject {
     }
 
     func disconnectChatGPT() {
+        emailScanGeneration += 1
+        isSyncing = false
+        syncStageMessage = nil
         KeychainStore.remove(KeychainKeys.openAIKey)
         connections.aiConnected = false
     }
@@ -546,21 +630,36 @@ final class AppState: ObservableObject {
             return
         }
 
+        guard let scanOwnerID = user?.userID else { return }
+        emailScanGeneration += 1
+        let scanGeneration = emailScanGeneration
+        let scannedAccountIDs = Set(emailAccounts.map(\.id))
+        func scanIsCurrent(_ accountID: String? = nil) -> Bool {
+            guard emailScanGeneration == scanGeneration,
+                  user?.userID == scanOwnerID else { return false }
+            guard let accountID else { return true }
+            return scannedAccountIDs.contains(accountID)
+                && emailAccounts.contains(where: { $0.id == accountID })
+        }
+
         let isInitialLoad = inbox.needsInitialLoad
         isSyncing = true
         syncStageMessage = "Finding job-related email…"
         if presentErrors || isInitialLoad { inbox.beginLoading() }
         defer {
-            isSyncing = false
-            syncStageMessage = nil
+            if emailScanGeneration == scanGeneration {
+                isSyncing = false
+                syncStageMessage = nil
+            }
         }
         do {
-            let query = "newer_than:60d -category:promotions -category:social {application applied recruiter hiring interview assessment \"next steps\" offer position candidate \"not moving forward\" \"thank you for your interest\"}"
-            var important: [InboxMessage] = []
-            var updates: [DetectedJobUpdate] = []
-            var scannedCount = 0
-            var successfulMailboxes = 0
+            var analyzedCount = 0
+            var newImportantCount = 0
+            var newJobUpdateCount = 0
+            var completedMailboxes = 0
+            var backloggedMailboxes = 0
             var failures: [String] = []
+            var gmailConfigurationError: GmailAPIError?
 
             for (index, account) in emailAccounts.enumerated() {
                 syncStageMessage = "Scanning \(index + 1) of \(emailAccounts.count): \(account.email)…"
@@ -578,60 +677,119 @@ final class AppState: ObservableObject {
                     failures.append("\(account.email): reconnect required")
                     continue
                 }
+                guard scanIsCurrent(account.id) else { return }
 
-                let emails: [EmailMessage]
+                let scanStartedAt = Date()
+                let batch: EmailFetchBatch
                 do {
+                    let receivedAfter = emailScanHistory.receivedAfter(for: account.id)
+                    let processedIDs = emailScanHistory.processedMessageIDs(for: account.id)
                     switch account.provider {
                     case .gmail:
-                        emails = try await gmailAPI.recentMessages(
-                            query: query, maxResults: 40, token: token, account: account
+                        batch = try await gmailAPI.recentMessageBatch(
+                            account: account,
+                            maxResults: 40,
+                            token: token,
+                            receivedAfter: receivedAfter,
+                            excludingMessageIDs: processedIDs
                         )
                     case .outlook:
-                        emails = try await outlookMailAPI.recentMessages(
-                            account: account, maxResults: 40, token: token
+                        batch = try await outlookMailAPI.recentMessageBatch(
+                            account: account,
+                            maxResults: 40,
+                            token: token,
+                            receivedAfter: receivedAfter,
+                            excludingMessageIDs: processedIDs
                         )
                     }
                 } catch let configuration as GmailAPIError {
-                    throw configuration
+                    gmailConfigurationError = configuration
+                    failures.append("\(account.email): \(configuration.localizedDescription)")
+                    continue
                 } catch {
                     failures.append("\(account.email): \(error.localizedDescription)")
                     continue
                 }
+                guard scanIsCurrent(account.id) else { return }
 
-                successfulMailboxes += 1
-                scannedCount += emails.count
-                guard !emails.isEmpty else { continue }
+                let emails = batch.messages
+                guard !emails.isEmpty else {
+                    guard !batch.hasMore else {
+                        failures.append("\(account.email): email paging couldn't make progress")
+                        continue
+                    }
+                    guard inbox.finishRefreshWithoutChanges(now: scanStartedAt),
+                          emailScanHistory.recordSuccessfulEmptyScan(
+                            accountID: account.id,
+                            cursorDate: scanStartedAt
+                          ) else {
+                        failures.append("\(account.email): Orbit couldn't save scan progress")
+                        continue
+                    }
+                    completedMailboxes += 1
+                    continue
+                }
                 syncStageMessage = "Analyzing job email from \(account.email)…"
-                let output = try await EmailIntelligence(apiKey: key).analyze(emails)
-                important.append(contentsOf: output.inbox)
-                updates.append(contentsOf: output.jobUpdates)
+                do {
+                    let output = try await EmailIntelligence(apiKey: key).analyze(emails)
+                    guard scanIsCurrent(account.id) else { return }
+                    // Save app-facing summaries before marking provider messages
+                    // processed. A crash can cause harmless re-analysis, never a
+                    // permanently skipped result.
+                    guard inbox.mergeMessages(output.inbox, now: scanStartedAt) else {
+                        throw APIError.server(
+                            status: -1,
+                            message: "Orbit couldn't save the filtered Inbox on this device."
+                        )
+                    }
+                    guard emailScanHistory.recordSuccessfulAnalysis(
+                        accountID: account.id,
+                        messages: emails,
+                        jobUpdates: output.jobUpdates,
+                        cursorDate: batch.hasMore ? nil : scanStartedAt
+                    ) else {
+                        throw APIError.server(
+                            status: -1,
+                            message: "Orbit couldn't save email scan progress on this device."
+                        )
+                    }
+                    analyzedCount += emails.count
+                    newImportantCount += output.inbox.count
+                    newJobUpdateCount += output.jobUpdates.count
+                    completedMailboxes += 1
+                    if batch.hasMore { backloggedMailboxes += 1 }
+                } catch {
+                    failures.append("\(account.email): \(error.localizedDescription)")
+                }
             }
 
-            guard successfulMailboxes > 0 else {
+            guard scanIsCurrent() else { return }
+
+            guard completedMailboxes > 0 else {
+                if let gmailConfigurationError { throw gmailConfigurationError }
                 throw APIError.server(status: 401, message: failures.first ?? "Reconnect your email accounts and try again.")
             }
 
-            guard scannedCount > 0 else {
-                inbox.setMessages([])
-                detectedJobUpdates = []
-                lastSyncedAt = .now
-                lastSyncSummary = "No matching job email across \(successfulMailboxes) inbox\(successfulMailboxes == 1 ? "" : "es")"
-                if presentErrors, !failures.isEmpty {
-                    alert = AppAlert(title: "Some email accounts need attention", message: failures.joined(separator: "\n"))
-                }
-                return
-            }
-
-            important.sort { $0.receivedAt > $1.receivedAt }
-            inbox.setMessages(important)
-            detectedJobUpdates = updates
-            tasks.propose(from: important, updates: updates)
+            detectedJobUpdates = emailScanHistory.pendingJobUpdates
+            rebuildTaskSuggestions()
             lastSyncedAt = .now
-            let jobsN = updates.count
-            let mailN = important.count
-            lastSyncSummary = "\(scannedCount) scanned from \(successfulMailboxes) inbox\(successfulMailboxes == 1 ? "" : "es") · \(jobsN) job update\(jobsN == 1 ? "" : "s") · \(mailN) important"
+            if analyzedCount == 0 {
+                lastSyncSummary = "Up to date across \(completedMailboxes) inbox\(completedMailboxes == 1 ? "" : "es")"
+            } else {
+                let backlogSuffix = backloggedMailboxes > 0 ? " · more queued" : ""
+                lastSyncSummary = "\(analyzedCount) new analyzed · \(newJobUpdateCount) job update\(newJobUpdateCount == 1 ? "" : "s") · \(newImportantCount) important\(backlogSuffix)"
+            }
             if presentErrors, !failures.isEmpty {
-                alert = AppAlert(title: "Scan completed with skipped accounts", message: failures.joined(separator: "\n"))
+                if let gmailConfigurationError {
+                    alert = AppAlert(
+                        title: "Scan completed with skipped accounts",
+                        message: failures.joined(separator: "\n"),
+                        actionTitle: "Open Google Cloud",
+                        actionURL: gmailConfigurationError.recoveryURL
+                    )
+                } else {
+                    alert = AppAlert(title: "Scan completed with skipped accounts", message: failures.joined(separator: "\n"))
+                }
             }
         } catch let error as GmailAPIError {
             if presentErrors {
@@ -708,18 +866,72 @@ final class AppState: ObservableObject {
 
     /// Confirm a detected update — writes it to the job store.
     func acceptJobUpdate(_ update: DetectedJobUpdate) {
-        jobs.applyDetected(update)
-        detectedJobUpdates.removeAll { $0.id == update.id }
+        guard jobs.applyDetected(update) else {
+            alert = AppAlert(title: "Couldn't save job update", message: "The suggestion is still waiting for review. Try again.")
+            return
+        }
+        guard emailScanHistory.recordJobDecision(.accepted, for: update) else {
+            alert = AppAlert(title: "Job saved", message: "Orbit couldn't save the email decision, so this suggestion may remain visible until the next scan.")
+            return
+        }
+        detectedJobUpdates = emailScanHistory.pendingJobUpdates
+        rebuildTaskSuggestions()
     }
 
     func dismissJobUpdate(_ update: DetectedJobUpdate) {
-        detectedJobUpdates.removeAll { $0.id == update.id }
+        guard emailScanHistory.recordJobDecision(.dismissed, for: update) else {
+            alert = AppAlert(title: "Couldn't dismiss suggestion", message: "Orbit couldn't save that decision on this device. Try again.")
+            return
+        }
+        detectedJobUpdates = emailScanHistory.pendingJobUpdates
+        rebuildTaskSuggestions()
     }
 
     func acceptAllJobUpdates() {
         let updates = detectedJobUpdates
-        for update in updates { jobs.applyDetected(update) }
-        detectedJobUpdates.removeAll()
+        var failed = 0
+        for update in updates {
+            guard jobs.applyDetected(update),
+                  emailScanHistory.recordJobDecision(.accepted, for: update) else {
+                failed += 1
+                continue
+            }
+        }
+        detectedJobUpdates = emailScanHistory.pendingJobUpdates
+        rebuildTaskSuggestions()
+        if failed > 0 {
+            alert = AppAlert(
+                title: "Some updates need another try",
+                message: "\(failed) job update\(failed == 1 ? " was" : "s were") left waiting because Orbit couldn't save every change."
+            )
+        }
+    }
+
+    func acceptTaskSuggestion(_ item: TaskItem) {
+        guard tasks.acceptSuggestion(item) else {
+            alert = AppAlert(title: "Couldn't save To Do", message: "The suggestion is still waiting for review. Try again.")
+            return
+        }
+        guard emailScanHistory.recordTaskDecision(
+            .accepted,
+            sourceMessageID: item.relatedEmailID
+        ) else {
+            alert = AppAlert(title: "To Do saved", message: "Orbit couldn't save the email decision, so this suggestion may remain visible until the next scan.")
+            return
+        }
+        rebuildTaskSuggestions()
+    }
+
+    func dismissTaskSuggestion(_ item: TaskItem) {
+        guard emailScanHistory.recordTaskDecision(
+            .dismissed,
+            sourceMessageID: item.relatedEmailID
+        ) else {
+            alert = AppAlert(title: "Couldn't dismiss To Do", message: "Orbit couldn't save that decision on this device. Try again.")
+            return
+        }
+        tasks.dismissSuggestion(item)
+        rebuildTaskSuggestions()
     }
 
     func addCalendarEventToTasks(_ event: UnifiedCalendarEvent) {
@@ -804,6 +1016,12 @@ final class AppState: ObservableObject {
 
     private func apply(_ session: UserSession) {
         user = session
+        assistantMemory.load(ownerID: session.userID)
+        emailScanHistory.load(ownerID: session.userID)
+        if emailScanHistory.hasProcessedMessages, !inbox.hasStoredSnapshot {
+            _ = emailScanHistory.resetProcessingStateKeepingDecisions()
+        }
+        detectedJobUpdates = emailScanHistory.pendingJobUpdates
         connections.googleConnected = true
         // If the login identity granted Gmail/Calendar during auth, reflect it.
         if session.grantedScopes.contains(GoogleScopes.gmailReadonly),
@@ -817,10 +1035,18 @@ final class AppState: ObservableObject {
         }
         connections.aiConnected = isChatGPTConnected
         updateEmailConnectionState()
+        rebuildTaskSuggestions()
     }
 
     private func loadPersistedState() {
         let defaults = UserDefaults.standard
+        let restoredOwnerID = UserSession.restore()?.userID
+        assistantMemory.load(ownerID: restoredOwnerID)
+        emailScanHistory.load(ownerID: restoredOwnerID)
+        if emailScanHistory.hasProcessedMessages, !inbox.hasStoredSnapshot {
+            _ = emailScanHistory.resetProcessingStateKeepingDecisions()
+        }
+        detectedJobUpdates = emailScanHistory.pendingJobUpdates
         connections.healthConnected = defaults.bool(forKey: Keys.health)
         connections.aiConnected = isChatGPTConnected
         let storedEmailData = defaults.data(forKey: Keys.emailAccounts) ?? defaults.data(forKey: Keys.gmailAccounts)
@@ -841,6 +1067,7 @@ final class AppState: ObservableObject {
         updateCalendarConnectionState()
         tasks.reload()
         tasks.setAppleCalendarSyncEnabled(calendar.connectedProviders.contains(.apple))
+        rebuildTaskSuggestions()
     }
 
     private func persistEmailAccounts() {
@@ -868,6 +1095,14 @@ final class AppState: ObservableObject {
         connections.calendarConnected = !calendar.connectedProviders.isEmpty
     }
 
+    private func rebuildTaskSuggestions() {
+        tasks.propose(
+            from: inbox.allMessages,
+            updates: emailScanHistory.pendingJobUpdates,
+            excludingResolvedEmailIDs: emailScanHistory.resolvedTaskMessageIDs
+        )
+    }
+
     private func resetSignedOut(clearSetup: Bool) {
         user = nil
         emailAccounts = []
@@ -891,6 +1126,8 @@ final class AppState: ObservableObject {
         health.disconnect()
         finance.clear()
         AssistantConversationStore.clear()
+        assistantMemory.unload()
+        emailScanHistory.unload()
         assistantLaunch = nil
         financePath = []
         phase = .signedOut

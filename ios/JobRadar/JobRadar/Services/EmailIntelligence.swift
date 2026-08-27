@@ -2,8 +2,7 @@ import Foundation
 
 /// An AI-detected job-application update, awaiting user confirmation before it
 /// touches the job store (the AI never writes silently).
-struct DetectedJobUpdate: Identifiable, Equatable {
-    let id = UUID()
+struct DetectedJobUpdate: Identifiable, Equatable, Codable {
     var company: String
     var role: String
     var status: JobStatus
@@ -15,6 +14,27 @@ struct DetectedJobUpdate: Identifiable, Equatable {
     var sourceSender: String
     var sourceSubject: String
     var sourceDate: Date?
+
+    /// Stable across launches and repeated model runs so an accepted or ignored
+    /// suggestion cannot reappear with a fresh random UUID.
+    var id: String { decisionKey }
+    var decisionKey: String {
+        if let sourceMessageID, !sourceMessageID.isEmpty {
+            // Provider IDs are already mailbox-namespaced and immutable. Keep
+            // model-volatile wording/status out of suggestion identity.
+            return "message|\(sourceMessageID)"
+        }
+        return [sourceProvider.rawValue, sourceMailbox, company, role]
+            .map(Self.normalizedKeyPart)
+            .joined(separator: "|")
+    }
+
+    private static func normalizedKeyPart(_ value: String) -> String {
+        value.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+    }
 }
 
 /// Turns provider-neutral mail into a focused inbox and proposed job updates.
@@ -34,7 +54,8 @@ struct EmailIntelligence {
             system: Self.system,
             user: Self.user(emails),
             schema: schema,
-            maxOutputTokens: 6_000
+            maxOutputTokens: 6_000,
+            reasoningEffort: .low
         )
         let payload: Payload
         do {
@@ -151,13 +172,15 @@ struct EmailIntelligence {
         }
         .sorted { $0.receivedAt > $1.receivedAt }
 
-        var seenJobs = Set<String>()
+        var seenJobSources = Set<String>()
         let jobs = payload.jobUpdates.compactMap { dto -> DetectedJobUpdate? in
             guard let source = byID[dto.sourceMessageId] else { return nil }
             let company = cleaned(dto.company, fallback: "", limit: 120)
             guard !company.isEmpty else { return nil }
-            let dedupeKey = "\(dto.sourceMessageId)|\(company.lowercased())|\(dto.status)"
-            guard seenJobs.insert(dedupeKey).inserted else { return nil }
+            // One provider message represents one review decision. If a model
+            // emits several interpretations for it, keep only the first rather
+            // than creating identities that can drift across later analyses.
+            guard seenJobSources.insert(dto.sourceMessageId).inserted else { return nil }
             return DetectedJobUpdate(
                 company: company,
                 role: cleaned(dto.role, fallback: "", limit: 160),

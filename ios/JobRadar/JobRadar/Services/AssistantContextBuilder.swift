@@ -25,7 +25,13 @@ struct AssistantContextBuilder {
     /// A full session snapshot. The probe opts into each finance detail branch,
     /// but the builder still omits all Finance data unless sharing is enabled.
     func liveContext() -> AssistantContext {
-        context(for: "finance money account balance transaction income paycheck salary")
+        var snapshot = context(
+            for: "finance money account balance transaction income paycheck salary"
+        )
+        snapshot.memoryLines = app.assistantMemory.approvedForLiveSession().map {
+            "- [\($0.category.rawValue)] \($0.text)"
+        }
+        return snapshot
     }
 
     func context(for prompt: String) -> AssistantContext {
@@ -150,9 +156,13 @@ struct AssistantContextBuilder {
             }
         }
 
+        let memoryLines = app.assistantMemory.relevant(for: prompt).map {
+            "- [\($0.category.rawValue)] \($0.text)"
+        }
         return AssistantContext(
             userName: app.user?.firstName ?? "the user",
-            lines: lines
+            lines: lines,
+            memoryLines: memoryLines
         )
     }
 }

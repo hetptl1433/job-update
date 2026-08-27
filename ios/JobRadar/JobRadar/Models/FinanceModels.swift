@@ -156,6 +156,18 @@ enum FinanceInstitutionBrand: String, CaseIterable, Hashable {
             self = .generic
         }
     }
+
+    /// Exact owner-supplied marks bundled for the institutions whose compact
+    /// symbols are legible at account-row sizes. Other institutions retain the
+    /// neutral initials fallback until an approved asset is available.
+    var officialLogoAssetName: String? {
+        switch self {
+        case .chase: "FinanceLogoChase"
+        case .americanExpress: "FinanceLogoAmericanExpress"
+        case .discover: "FinanceLogoDiscover"
+        default: nil
+        }
+    }
 }
 
 enum FinanceInstitutionName {

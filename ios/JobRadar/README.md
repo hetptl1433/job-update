@@ -15,9 +15,13 @@ The internal target and bundle identifier remain `JobRadar` and
    Microsoft 365 inboxes; adding one never changes the primary profile.
 2. **Connect OpenAI processing** validates a user-provided OpenAI API key and
    stores it in the iOS Keychain for this personal-development build.
-3. **Scan email** finds up to 40 likely job messages from the last 60 days in
-   every connected mailbox. Each detected update retains its source mailbox,
-   sender, subject, date, status, reason, and next action.
+3. **Scan email** analyzes a bounded batch of up to 40 unseen likely job
+   messages per connected mailbox. Gmail and Outlook pages are drained across
+   later scans without advancing past a remaining backlog. A protected,
+   owner-scoped ledger stores provider IDs/cursors and accepted or dismissed
+   decisions—not raw email—so unchanged messages are not repeatedly sent to AI.
+   Each detected update retains its source mailbox, sender, subject, date,
+   status, reason, and next action.
 4. The OpenAI Responses API returns a strict, schema-constrained important inbox
    and proposed job updates. Raw email is not written to local storage.
 5. The user reviews proposed updates one at a time with compact **Update** and
@@ -127,16 +131,26 @@ portal and add it to both App IDs (`com.hetpatel.jobradar` and
 
 For a personal development run, create an API key at `platform.openai.com`, then
 connect it during onboarding or in Settings. OpenAI API billing is separate from
-ChatGPT Plus. The model defaults to `gpt-4o-mini` and can be changed with the
-`OpenAIModel` Info.plist value.
+ChatGPT Plus. The text/email model defaults to `gpt-4o-mini`; Settings offers a
+curated quality/cost selector while `OpenAIModel` remains the bundled fallback.
 
 Orbit Chat's **Live conversation** uses the OpenAI Realtime API with
-`gpt-realtime` by default (`OpenAIRealtimeModel` overrides it). It streams
+`gpt-realtime` by default (`OpenAIRealtimeModel` is the bundled fallback, and
+Settings offers compatible Realtime choices). It streams
 24 kHz microphone audio and native model speech over one continuous session,
 shows transcript bubbles as turns complete, and seeds a new session with the
 protected on-device conversation plus the current privacy-filtered Orbit data
 snapshot. Finance details are included only when the user has enabled Finance
 sharing for the assistant.
+
+**Personal Memory** is context, not model training. Explicit typed commands such
+as `Remember that I prefer concise answers` save a bounded owner-scoped memory
+on the iPhone. An optional setting can locally detect direct stable statements
+and queue them for approval; pending suggestions are never sent to the model.
+Approved memories can be reviewed, deleted, or disabled. Common secret patterns
+are rejected, and relevant approved memories are separated from instructions as
+untrusted reference data. Live voice is read-only for Personal Memory; saving or
+deleting memory requires typed Chat or Settings.
 
 Do **not** distribute a build that asks users to put an OpenAI key on the phone.
 Before TestFlight/App Store distribution, add a backend endpoint that holds

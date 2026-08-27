@@ -67,45 +67,56 @@ struct MainTabView: View {
 struct OrbitControlBar: View {
     @Binding var selection: AppState.Tab
     let onVoice: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(alignment: .center, spacing: 0) {
-            destination(.home, title: "Home", symbol: "house", selectedSymbol: "house.fill")
-            destination(.tasks, title: "To Do", symbol: "checklist", selectedSymbol: "checklist")
-            destination(.inbox, title: "Inbox", symbol: "tray", selectedSymbol: "tray.fill")
+        GeometryReader { proxy in
+            let slotWidth = proxy.size.width / 6
+            let voiceDiameter = min(43, max(36, slotWidth - 18))
 
-            Button(action: onVoice) {
-                VStack(spacing: 3) {
-                    ZStack {
-                        Circle()
-                            .fill(AppTheme.coral.opacity(0.16))
-                            .frame(width: 50, height: 50)
-                            .blur(radius: 7)
-                        Circle()
-                            .fill(AppTheme.coral)
-                            .frame(width: 43, height: 43)
-                            .overlay(Circle().strokeBorder(.white.opacity(0.34), lineWidth: 1))
-                            .shadow(color: AppTheme.coral.opacity(0.32), radius: 9, y: 4)
-                        Image(systemName: "waveform")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
+            HStack(alignment: .center, spacing: 0) {
+                destination(.home, title: "Home", symbol: "house", selectedSymbol: "house.fill")
+                destination(.tasks, title: "To Do", symbol: "checklist", selectedSymbol: "checklist")
+                destination(.inbox, title: "Inbox", symbol: "tray", selectedSymbol: "tray.fill")
+
+                Button(action: onVoice) {
+                    VStack(spacing: 3) {
+                        ZStack {
+                            Circle()
+                                .fill(AppTheme.coral.opacity(0.16))
+                                .frame(width: voiceDiameter + 7, height: voiceDiameter + 7)
+                                .blur(radius: 7)
+                            Circle()
+                                .fill(AppTheme.coral)
+                                .frame(width: voiceDiameter, height: voiceDiameter)
+                                .overlay(Circle().strokeBorder(.white.opacity(0.34), lineWidth: 1))
+                                .shadow(color: AppTheme.coral.opacity(0.32), radius: 9, y: 4)
+                            Image(systemName: "waveform")
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            Text("Voice")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(AppTheme.coral)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
                     }
-                    Text("Voice")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(AppTheme.coral)
+                    .frame(maxWidth: .infinity)
+                    .offset(y: dynamicTypeSize.isAccessibilitySize ? 0 : -4)
                 }
-                .frame(maxWidth: .infinity)
-                .offset(y: -5)
-            }
-            .buttonStyle(OrbitBarButtonStyle())
-            .accessibilityLabel("Open Orbit live voice")
+                .buttonStyle(OrbitBarButtonStyle())
+                .accessibilityLabel("Open Orbit live voice")
 
-            destination(.jobs, title: "Jobs", symbol: "briefcase", selectedSymbol: "briefcase.fill")
-            destination(.finance, title: "Finance", symbol: "creditcard", selectedSymbol: "creditcard.fill")
+                destination(.jobs, title: "Jobs", symbol: "briefcase", selectedSymbol: "briefcase.fill")
+                destination(.finance, title: "Finance", symbol: "creditcard", selectedSymbol: "creditcard.fill")
+            }
+            .padding(.horizontal, 5)
+            .padding(.top, 7)
+            .padding(.bottom, 3)
         }
-        .padding(.horizontal, 5)
-        .padding(.top, 7)
-        .padding(.bottom, 3)
+        .frame(height: dynamicTypeSize.isAccessibilitySize ? 61 : 68)
         .background(.ultraThinMaterial)
         .overlay(alignment: .top) {
             Rectangle()
@@ -126,14 +137,16 @@ struct OrbitControlBar: View {
                 selection = tab
             }
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: dynamicTypeSize.isAccessibilitySize ? 0 : 4) {
                 Image(systemName: isSelected ? selectedSymbol : symbol)
                     .font(.system(size: 17, weight: isSelected ? .semibold : .regular))
                     .symbolRenderingMode(.monochrome)
-                Text(title)
-                    .font(.system(size: 9, weight: isSelected ? .semibold : .medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                if !dynamicTypeSize.isAccessibilitySize {
+                    Text(title)
+                        .font(.system(size: 9, weight: isSelected ? .semibold : .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
             }
             .foregroundStyle(isSelected ? AppTheme.primaryText : AppTheme.tertiaryText)
             .frame(maxWidth: .infinity, minHeight: 47)

@@ -170,7 +170,7 @@
 		3DA2545E3854B16EC3DEA8FB /* MicrosoftAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrosoftAuthService.swift; sourceTree = "<group>"; };
 		3FF92461C5FFFF7F3BB23880 /* JobsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobsView.swift; sourceTree = "<group>"; };
 		4661D1CA98F29632B387DF10 /* OrbitWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbitWatchApp.swift; sourceTree = "<group>"; };
-		482585DDB0350316F77C0D40 /* OrbitTasksWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OrbitTasksWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		482585DDB0350316F77C0D40 /* OrbitTasksWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = OrbitTasksWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		4EE857CFC8FF53BB99E83840 /* OrbitTasksWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OrbitTasksWidget.entitlements; sourceTree = "<group>"; };
 		511D058F3F7ABBF06BBD47B9 /* AutomationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationService.swift; sourceTree = "<group>"; };
 		5125E34437F5EB2C491A65EF /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
@@ -194,7 +194,7 @@
 		9E1773AC47E7872B50A91F32 /* IncomeCalculatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncomeCalculatorView.swift; sourceTree = "<group>"; };
 		9FC343A20B40D82C59F783A8 /* TaskRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRepository.swift; sourceTree = "<group>"; };
 		A003E5C361168415CDA11A84 /* RealtimeClientSecretProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeClientSecretProvider.swift; sourceTree = "<group>"; };
-		A149CC4FEE24F218065193DC /* JobRadarTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = JobRadarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A149CC4FEE24F218065193DC /* JobRadarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JobRadarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA64D209496530B835D58DE0 /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
 		ACDE3B61367785DDDEF1C81A /* JobRadar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JobRadar.entitlements; sourceTree = "<group>"; };
 		B2C92CD2B8640D66E3CBCC82 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -218,7 +218,7 @@
 		E10EAC59F401CF1E337C7449 /* WatchVoiceSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchVoiceSync.swift; sourceTree = "<group>"; };
 		E490EDBDD456EADE5AD97457 /* DomainModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainModels.swift; sourceTree = "<group>"; };
 		E522CD746A20A5BC8A8578A1 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
-		E5C1C4C959CBEDB3454D8549 /* JobRadar.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = JobRadar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E5C1C4C959CBEDB3454D8549 /* Orbit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Orbit.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E828B0E48D19E2D0EB7637AD /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		E8F9A7C96773C4227E89DC95 /* GmailRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GmailRepository.swift; sourceTree = "<group>"; };
 		ECD9B66ADF909794E6305D8B /* HealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthView.swift; sourceTree = "<group>"; };
@@ -295,7 +295,7 @@
 		2AF73A4890F4DE996AB95575 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				E5C1C4C959CBEDB3454D8549 /* JobRadar.app */,
+				E5C1C4C959CBEDB3454D8549 /* Orbit.app */,
 				A149CC4FEE24F218065193DC /* JobRadarTests.xctest */,
 				482585DDB0350316F77C0D40 /* OrbitTasksWidget.appex */,
 				F882F5036BC1EEEBDF12AB42 /* OrbitWatchApp.app */,
@@ -603,7 +603,7 @@
 				4BA8291384B92F40E6F5B8EA /* MSAL */,
 			);
 			productName = JobRadar;
-			productReference = E5C1C4C959CBEDB3454D8549 /* JobRadar.app */;
+			productReference = E5C1C4C959CBEDB3454D8549 /* Orbit.app */;
 			productType = "com.apple.product-type.application";
 		};
 		DD1C28B7ABB860DD7281CCE1 /* JobRadarTests */ = {
@@ -648,7 +648,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					62DF076E9D8E8CD291E700E9 = {
 						DevelopmentTeam = VN6463GX9K;
@@ -916,9 +916,11 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 4;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -932,6 +934,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.10;
@@ -1065,9 +1068,11 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 4;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -1088,6 +1093,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.10;

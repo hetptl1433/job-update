@@ -34,6 +34,7 @@ struct JobRadarApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
+                        appState.consumePendingLaunchRequest()
                         appState.tasks.reload()
                     }
                 }

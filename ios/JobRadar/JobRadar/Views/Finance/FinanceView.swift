@@ -880,9 +880,9 @@ private struct FinanceInstitutionDetailView: View {
     }
 }
 
-/// Compact institution artwork rendered entirely with SwiftUI text and vector
-/// shapes. This keeps marks sharp in dark mode, Dynamic Type, and future screen
-/// scales without shipping stock imagery or downloading remote assets.
+/// Compact institution artwork. Owner-supplied marks are used where bundled;
+/// neutral initials remain the fallback for institutions without an approved
+/// local asset.
 private struct FinanceInstitutionMark: View {
     var name: String
     var size: CGFloat
@@ -897,7 +897,6 @@ private struct FinanceInstitutionMark: View {
                 .fill(backgroundColor)
 
             mark
-                .foregroundStyle(foregroundColor)
         }
         .frame(width: size, height: size)
         .overlay {
@@ -909,33 +908,32 @@ private struct FinanceInstitutionMark: View {
 
     @ViewBuilder
     private var mark: some View {
-        switch brand {
-        case .chase:
-            ChaseInstitutionGlyph()
-                .frame(width: size * 0.52, height: size * 0.52)
-        case .americanExpress:
-            Text("AM\nEX")
-                .font(.system(size: size * 0.22, weight: .black, design: .rounded))
-                .multilineTextAlignment(.center)
-                .lineSpacing(-size * 0.07)
-        case .discover:
-            ZStack(alignment: .bottomTrailing) {
-                Text("DISC")
-                    .font(.system(size: size * 0.20, weight: .black, design: .rounded))
-                Circle()
-                    .fill(Color(hex: 0xF58220))
-                    .frame(width: size * 0.19, height: size * 0.19)
-                    .offset(x: size * 0.08, y: size * 0.05)
-            }
-        case .bankOfAmerica:
+        if let assetName = brand.officialLogoAssetName {
+            Image(assetName)
+                .resizable()
+                .renderingMode(.original)
+                .scaledToFit()
+                .frame(width: size * officialLogoScale, height: size * officialLogoScale)
+        } else if brand == .bankOfAmerica {
             Text("BOA")
                 .font(.system(size: size * 0.22, weight: .black, design: .rounded))
                 .italic()
-        default:
+                .foregroundStyle(foregroundColor)
+        } else {
             Text(shortMark)
                 .font(.system(size: size * fontScale, weight: .black, design: .rounded))
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
+                .foregroundStyle(foregroundColor)
+        }
+    }
+
+    private var officialLogoScale: CGFloat {
+        switch brand {
+        case .americanExpress: 0.76
+        case .chase: 0.76
+        case .discover: 0.84
+        default: 0
         }
     }
 
@@ -976,9 +974,7 @@ private struct FinanceInstitutionMark: View {
 
     private var backgroundColor: Color {
         switch brand {
-        case .chase: Color(hex: 0x117ACA)
-        case .americanExpress: Color(hex: 0x006FCF)
-        case .discover: Color(light: 0xFFFFFF, dark: 0xF4F4F6)
+        case .chase, .americanExpress, .discover: Color(light: 0xFFFFFF, dark: 0xF4F4F6)
         case .bankOfAmerica: Color(hex: 0xE31837)
         case .wellsFargo: Color(hex: 0xD71E28)
         case .citi: Color(hex: 0x056DAE)
@@ -1002,7 +998,6 @@ private struct FinanceInstitutionMark: View {
 
     private var foregroundColor: Color {
         switch brand {
-        case .discover: Color(hex: 0x171717)
         case .wellsFargo: Color(hex: 0xFFCD41)
         case .generic: AppTheme.primaryText
         default: .white
@@ -1010,32 +1005,7 @@ private struct FinanceInstitutionMark: View {
     }
 
     private var borderColor: Color {
-        brand == .discover || brand == .generic ? AppTheme.border : .clear
-    }
-}
-
-private struct ChaseInstitutionGlyph: View {
-    var body: some View {
-        ZStack {
-            ForEach(0..<4, id: \.self) { index in
-                ChaseInstitutionWedge()
-                    .rotationEffect(.degrees(Double(index) * 90))
-            }
-        }
-    }
-}
-
-private struct ChaseInstitutionWedge: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.width * 0.17, y: 0))
-        path.addLine(to: CGPoint(x: rect.width * 0.72, y: 0))
-        path.addLine(to: CGPoint(x: rect.width, y: rect.height * 0.28))
-        path.addLine(to: CGPoint(x: rect.width * 0.67, y: rect.height * 0.28))
-        path.addLine(to: CGPoint(x: rect.width * 0.50, y: rect.height * 0.12))
-        path.addLine(to: CGPoint(x: rect.width * 0.17, y: rect.height * 0.12))
-        path.closeSubpath()
-        return path
+        brand.officialLogoAssetName != nil || brand == .generic ? AppTheme.border : .clear
     }
 }
 

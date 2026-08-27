@@ -174,3 +174,18 @@ final class RealtimeSessionConfigurationPayloadTests: XCTestCase {
         XCTAssertNil(emptyModel["model"])
     }
 }
+
+final class OrbitPendingLaunchStoreTests: XCTestCase {
+    func testVoiceLaunchRequestIsConsumedExactlyOnce() throws {
+        let suiteName = "OrbitPendingLaunchStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertNil(OrbitPendingLaunchStore.consume(defaults: defaults))
+
+        OrbitPendingLaunchStore.request(.voice, defaults: defaults)
+
+        XCTAssertEqual(OrbitPendingLaunchStore.consume(defaults: defaults), .voice)
+        XCTAssertNil(OrbitPendingLaunchStore.consume(defaults: defaults))
+    }
+}

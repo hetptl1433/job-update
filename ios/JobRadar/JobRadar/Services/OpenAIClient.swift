@@ -6,6 +6,10 @@ import Foundation
 /// A public/App Store build should proxy these calls through a backend because
 /// secrets embedded in any mobile application can ultimately be extracted.
 struct OpenAIClient {
+    enum ReasoningEffort: String {
+        case low, medium, high
+    }
+
     struct JSONSchema {
         let name: String
         let value: [String: Any]
@@ -63,29 +67,20 @@ struct OpenAIClient {
         system: String,
         user: String,
         schema: JSONSchema? = nil,
-        maxOutputTokens: Int = 4_000
+        maxOutputTokens: Int = 4_000,
+        reasoningEffort: ReasoningEffort? = nil
     ) async throws -> String {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw APIError.notConfigured("No OpenAI API key is connected.")
         }
 
-        var payload: [String: Any] = [
-            "model": model,
-            "instructions": system,
-            "input": user,
-            "store": false,
-            "max_output_tokens": maxOutputTokens
-        ]
-        if let schema {
-            payload["text"] = [
-                "format": [
-                    "type": "json_schema",
-                    "name": schema.name,
-                    "strict": true,
-                    "schema": schema.value
-                ]
-            ]
-        }
+        let payload = requestPayload(
+            system: system,
+            user: user,
+            schema: schema,
+            maxOutputTokens: maxOutputTokens,
+            reasoningEffort: reasoningEffort
+        )
 
         guard JSONSerialization.isValidJSONObject(payload) else {
             throw APIError.decoding("The AI request could not be encoded.")
@@ -135,6 +130,42 @@ struct OpenAIClient {
             throw APIError.decoding("OpenAI returned no text.")
         }
         return result
+    }
+
+    /// Kept internal so unit tests can verify model routing and Structured
+    /// Outputs without sending a network request.
+    func requestPayload(
+        system: String,
+        user: String,
+        schema: JSONSchema? = nil,
+        maxOutputTokens: Int = 4_000,
+        reasoningEffort: ReasoningEffort? = nil
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "model": model,
+            "instructions": system,
+            "input": user,
+            "store": false,
+            "max_output_tokens": maxOutputTokens
+        ]
+        if let schema {
+            payload["text"] = [
+                "format": [
+                    "type": "json_schema",
+                    "name": schema.name,
+                    "strict": true,
+                    "schema": schema.value
+                ]
+            ]
+        }
+        if let reasoningEffort, supportsReasoningEffort {
+            payload["reasoning"] = ["effort": reasoningEffort.rawValue]
+        }
+        return payload
+    }
+
+    private var supportsReasoningEffort: Bool {
+        model == "gpt-5.6" || model.hasPrefix("gpt-5.6-")
     }
 
     private func authorize(_ request: inout URLRequest) {

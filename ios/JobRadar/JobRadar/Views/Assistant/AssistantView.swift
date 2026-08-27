@@ -15,6 +15,7 @@ struct AssistantView: View {
     @State private var input: String
     @State private var sending = false
     @State private var showConnect = false
+    @State private var showMemory = false
     @State private var didRestoreConversation = false
     @AppStorage("orbit.ai.financeContextEnabled") private var shareFinanceWithAssistant = false
 
@@ -53,21 +54,29 @@ struct AssistantView: View {
         .navigationTitle("Orbit Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !messages.isEmpty {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if !messages.isEmpty {
                         Button("New conversation", systemImage: "square.and.pencil") {
                             messages = []
                             AssistantConversationStore.clear()
                         }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
                     }
-                    .accessibilityLabel("Conversation options")
+                    Button("Personal memory", systemImage: "brain.head.profile") {
+                        showMemory = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityLabel("Conversation options")
             }
         }
         .sheet(isPresented: $showConnect) { ConnectChatGPTView().environmentObject(app) }
+        .sheet(isPresented: $showMemory) {
+            NavigationStack {
+                AssistantMemorySettingsView().environmentObject(app)
+            }
+        }
         .onChange(of: messages) { _, messages in
             guard didRestoreConversation else { return }
             AssistantConversationStore.save(messages)
@@ -157,6 +166,8 @@ struct AssistantView: View {
                             .transition(.scale(scale: 0.86, anchor: .bottomLeading).combined(with: .opacity))
                     }
 
+                    AssistantMemorySuggestionSlot(memory: app.assistantMemory)
+
                     Color.clear.frame(height: 1).id("conversation-bottom")
                 }
                 .padding(AppTheme.Spacing.lg)
@@ -227,6 +238,12 @@ struct AssistantView: View {
         messages.append(ChatMessage(role: .user, text: text))
         input = ""
         sending = true
+        if let memoryReply = runMemoryCommand(text) {
+            messages.append(ChatMessage(role: .assistant, text: memoryReply))
+            sending = false
+            return
+        }
+        _ = app.assistantMemory.suggestMemory(from: text)
         if let toolReply = runStructuredTaskTool(text) {
             messages.append(ChatMessage(role: .assistant, text: toolReply))
             sending = false
@@ -292,10 +309,77 @@ struct AssistantView: View {
                 return "There are no unreviewed email task suggestions. Scan email first, then try again."
             }
             let suggestions = app.tasks.suggestions
-            suggestions.forEach(app.tasks.acceptSuggestion)
+            suggestions.forEach(app.acceptTaskSuggestion)
             return "Created \(suggestions.count) task\(suggestions.count == 1 ? "" : "s") from messages marked action-required."
         }
         return nil
+    }
+
+    private func runMemoryCommand(_ prompt: String) -> String? {
+        guard let command = AssistantMemoryCommand.parse(prompt) else { return nil }
+        switch command {
+        case .remember(let text):
+            switch app.assistantMemory.remember(text) {
+            case .saved(let memory):
+                return "I'll remember that \(memory.text). You can review or delete it anytime in Personal Memory."
+            case .duplicate:
+                return "I already have that in Personal Memory."
+            case .disabled:
+                return "Personal Memory is off. You can turn it on in Orbit Settings."
+            case .rejected(let reason):
+                return reason
+            case .failed(let reason):
+                return reason
+            }
+        case .forget(let text):
+            return app.assistantMemory.forget(matching: text)
+                ? "I've removed that from Personal Memory."
+                : "I couldn't remove one clear matching memory. Open Personal Memory to choose it directly."
+        case .forgetAll:
+            guard !app.assistantMemory.memories.isEmpty else {
+                return "Personal Memory is already empty."
+            }
+            return app.assistantMemory.deleteAll()
+                ? "I've cleared everything from Personal Memory."
+                : "I couldn't clear Personal Memory on this iPhone. Try again in Settings."
+        }
+    }
+}
+
+private struct AssistantMemorySuggestionSlot: View {
+    @ObservedObject var memory: AssistantMemoryRepository
+
+    var body: some View {
+        if let suggestion = memory.pendingSuggestions.first {
+            AssistantMemorySuggestionCard(suggestion: suggestion, memory: memory)
+        }
+    }
+}
+
+private struct AssistantMemorySuggestionCard: View {
+    let suggestion: AssistantMemorySuggestion
+    @ObservedObject var memory: AssistantMemoryRepository
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Label("Remember for next time?", systemImage: "brain.head.profile")
+                .font(.subheadline.weight(.semibold))
+            Text(suggestion.text)
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.secondaryText)
+            HStack {
+                Button("Not now") { _ = memory.dismissSuggestion(suggestion) }
+                    .buttonStyle(.bordered)
+                Button("Remember") { _ = memory.acceptSuggestion(suggestion) }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(AppTheme.Spacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            AppTheme.secondarySurface,
+            in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+        )
     }
 }
 

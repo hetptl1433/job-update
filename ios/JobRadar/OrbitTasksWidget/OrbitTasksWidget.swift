@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -104,11 +105,11 @@ private struct TasksWidgetView: View {
             Text("\(entry.tasks.count)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-            Link(destination: URL(string: "orbit://assistant")!) {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
+            Link(destination: URL(string: "orbit://voice")!) {
+                Image(systemName: "waveform")
                     .font(.caption.weight(.semibold))
             }
-            .accessibilityLabel("Chat with Orbit")
+            .accessibilityLabel("Open Orbit live voice")
             Link(destination: URL(string: "orbit://tasks/new")!) {
                 Image(systemName: "plus.circle.fill")
             }
@@ -314,11 +315,32 @@ struct OrbitAssistantWidget: Widget {
     }
 }
 
+/// A one-tap Control Center launcher that follows the same deep-link route as
+/// Orbit's in-app live voice control. Control widgets are available on iOS 18+;
+/// the rest of this extension continues to support iOS 17.
+@available(iOS 18.0, *)
+struct OrbitVoiceControl: ControlWidget {
+    static let kind = "OrbitVoiceControl"
+
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: Self.kind) {
+            ControlWidgetButton(action: OpenOrbitVoiceIntent()) {
+                Label("Orbit Voice", systemImage: "waveform.and.mic")
+            }
+        }
+        .displayName("Orbit Voice")
+        .description("Open Orbit directly in live voice mode.")
+    }
+}
+
 @main
 struct OrbitTasksWidgetBundle: WidgetBundle {
     var body: some Widget {
         OrbitTasksWidget()
         OrbitScheduledWidget()
         OrbitAssistantWidget()
+        if #available(iOS 18.0, *) {
+            OrbitVoiceControl()
+        }
     }
 }

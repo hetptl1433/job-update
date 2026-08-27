@@ -30,62 +30,120 @@ enum GmailAPIError: LocalizedError {
 /// Read-only. No message content is logged.
 struct GmailAPIClient: EmailProviderService {
     let provider: EmailProviderType = .gmail
-    private let base = URL(string: "https://gmail.googleapis.com/gmail/v1/users/me")!
+    private let base: URL
+    private let session: URLSession
 
-    func recentMessages(account: EmailAccount, maxResults: Int, token: String) async throws -> [EmailMessage] {
-        let query = "newer_than:60d -category:promotions -category:social {application applied recruiter hiring interview assessment \"next steps\" offer position candidate \"not moving forward\" \"thank you for your interest\"}"
-        return try await recentMessages(query: query, maxResults: maxResults, token: token, account: account)
+    init(
+        session: URLSession = .shared,
+        baseURL: URL = URL(string: "https://gmail.googleapis.com/gmail/v1/users/me")!
+    ) {
+        self.session = session
+        self.base = baseURL
     }
 
-    func recentMessages(
+    func recentMessageBatch(
+        account: EmailAccount,
+        maxResults: Int,
+        token: String,
+        receivedAfter: Date?,
+        excludingMessageIDs: Set<String>
+    ) async throws -> EmailFetchBatch {
+        var query = "newer_than:60d -category:promotions -category:social {application applied recruiter hiring interview assessment \"next steps\" offer position candidate \"not moving forward\" \"thank you for your interest\"}"
+        if let receivedAfter {
+            query += " after:\(Int(receivedAfter.timeIntervalSince1970))"
+        }
+        return try await recentMessageBatch(
+            query: query,
+            maxResults: maxResults,
+            token: token,
+            account: account,
+            excludingMessageIDs: excludingMessageIDs
+        )
+    }
+
+    func recentMessageBatch(
         query: String,
         maxResults: Int,
         token: String,
-        account: EmailAccount
-    ) async throws -> [EmailMessage] {
-        let ids = try await listMessageIDs(
-            query: query,
-            maxResults: min(max(maxResults, 1), 50),
-            token: token
-        )
-        guard !ids.isEmpty else { return [] }
+        account: EmailAccount,
+        excludingMessageIDs: Set<String> = []
+    ) async throws -> EmailFetchBatch {
+        let limit = min(max(maxResults, 1), 50)
+        var unseenIDs: [String] = []
+        var pageToken: String?
+        var visitedPageTokens = Set<String>()
+
+        // Gmail returns newest IDs first. Walk pages until there are `limit + 1`
+        // unseen IDs or the query is exhausted. That extra ID is how Orbit knows
+        // it must keep the old cursor and drain another bounded batch later.
+        repeat {
+            if let pageToken, !visitedPageTokens.insert(pageToken).inserted {
+                throw APIError.decoding("Gmail returned a repeated page while scanning messages.")
+            }
+            let page = try await listMessagePage(
+                query: query,
+                maxResults: 100,
+                pageToken: pageToken,
+                token: token
+            )
+            for id in page.ids where !excludingMessageIDs.contains(
+                "gmail:\(account.providerAccountID):\(id)"
+            ) {
+                unseenIDs.append(id)
+                if unseenIDs.count > limit { break }
+            }
+            pageToken = page.nextPageToken
+        } while unseenIDs.count <= limit && pageToken != nil
+
+        let hasMore = unseenIDs.count > limit
+        let selectedIDs = Array(unseenIDs.prefix(limit))
+        guard !selectedIDs.isEmpty else {
+            return EmailFetchBatch(messages: [], hasMore: false)
+        }
 
         // Full messages are independent. Fetch concurrently to avoid making a
-        // 40-message sync take 40 network round trips in series.
-        let indexed = await withTaskGroup(of: (Int, EmailMessage?).self) { group in
-            for (index, id) in ids.enumerated() {
+        // 40-message sync take 40 network round trips in series. A partial body
+        // failure fails the whole batch so its cursor can never skip that ID.
+        let indexed = try await withThrowingTaskGroup(of: (Int, EmailMessage).self) { group in
+            for (index, id) in selectedIDs.enumerated() {
                 group.addTask {
-                    let message = try? await fetchMessage(id: id, token: token, account: account)
-                    return (index, message)
+                    (index, try await fetchMessage(id: id, token: token, account: account))
                 }
             }
             var values: [(Int, EmailMessage)] = []
-            for await (index, message) in group {
-                if let message { values.append((index, message)) }
+            for try await value in group {
+                values.append(value)
             }
             return values.sorted { $0.0 < $1.0 }.map { $0.1 }
         }
-        guard !indexed.isEmpty else {
-            throw APIError.server(status: -1, message: "Gmail found messages but could not download them. Please reconnect Gmail and try again.")
-        }
-        return indexed
+        return EmailFetchBatch(messages: indexed, hasMore: hasMore)
     }
 
     // MARK: List
 
     private struct ListResponse: Decodable {
         let messages: [Ref]?
+        let nextPageToken: String?
         struct Ref: Decodable { let id: String; let threadId: String }
     }
 
-    private func listMessageIDs(query: String, maxResults: Int, token: String) async throws -> [String] {
+    private func listMessagePage(
+        query: String,
+        maxResults: Int,
+        pageToken: String?,
+        token: String
+    ) async throws -> (ids: [String], nextPageToken: String?) {
         var components = URLComponents(url: base.appending(path: "messages"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "maxResults", value: String(maxResults))
         ]
+        if let pageToken {
+            components.queryItems?.append(URLQueryItem(name: "pageToken", value: pageToken))
+        }
         let data = try await get(components.url!, token: token)
-        return (try JSONDecoder().decode(ListResponse.self, from: data)).messages?.map(\.id) ?? []
+        let response = try JSONDecoder().decode(ListResponse.self, from: data)
+        return (response.messages?.map(\.id) ?? [], response.nextPageToken)
     }
 
     // MARK: Get
@@ -212,7 +270,7 @@ struct GmailAPIClient: EmailProviderService {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 45
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.server(status: -1, message: nil) }
         guard (200..<300).contains(http.statusCode) else {
             let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])

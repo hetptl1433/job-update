@@ -15,13 +15,24 @@ enum MicrosoftGraphError: LocalizedError {
 }
 
 private enum MicrosoftGraph {
-    static func get(_ url: URL, token: String, preferUTC: Bool = false) async throws -> Data {
+    static func get(
+        _ url: URL,
+        token: String,
+        preferUTC: Bool = false,
+        preferImmutableIDs: Bool = false,
+        session: URLSession = .shared
+    ) async throws -> Data {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 45
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        if preferUTC { request.setValue("outlook.timezone=\"UTC\"", forHTTPHeaderField: "Prefer") }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        var preferences: [String] = []
+        if preferUTC { preferences.append("outlook.timezone=\"UTC\"") }
+        if preferImmutableIDs { preferences.append("IdType=\"ImmutableId\"") }
+        if !preferences.isEmpty {
+            request.setValue(preferences.joined(separator: ", "), forHTTPHeaderField: "Prefer")
+        }
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw MicrosoftGraphError.invalidResponse("Missing HTTP response.")
         }
@@ -53,45 +64,84 @@ private enum MicrosoftGraph {
 
 struct OutlookMailService: EmailProviderService {
     let provider: EmailProviderType = .outlook
-    private let base = URL(string: "https://graph.microsoft.com/v1.0/me/messages")!
+    private let base: URL
+    private let session: URLSession
 
-    func recentMessages(account: EmailAccount, maxResults: Int, token: String) async throws -> [EmailMessage] {
-        let since = Calendar.current.date(byAdding: .day, value: -60, to: .now) ?? .now
+    init(
+        session: URLSession = .shared,
+        baseURL: URL = URL(string: "https://graph.microsoft.com/v1.0/me/messages")!
+    ) {
+        self.session = session
+        self.base = baseURL
+    }
+
+    func recentMessageBatch(
+        account: EmailAccount,
+        maxResults: Int,
+        token: String,
+        receivedAfter: Date?,
+        excludingMessageIDs: Set<String>
+    ) async throws -> EmailFetchBatch {
+        let limit = min(max(maxResults, 1), 50)
+        let sixtyDaysAgo = Calendar.current.date(byAdding: .day, value: -60, to: .now) ?? .now
+        let since = max(receivedAfter ?? sixtyDaysAgo, sixtyDaysAgo)
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "$select", value: "id,conversationId,from,subject,bodyPreview,receivedDateTime,isRead,importance"),
             URLQueryItem(name: "$filter", value: "receivedDateTime ge \(MicrosoftGraph.fractional.string(from: since))"),
             URLQueryItem(name: "$orderby", value: "receivedDateTime desc"),
-            URLQueryItem(name: "$top", value: String(min(max(maxResults, 1), 100)))
+            URLQueryItem(name: "$top", value: "100")
         ]
-        let data = try await MicrosoftGraph.get(components.url!, token: token)
-        let response: Response
-        do { response = try JSONDecoder().decode(Response.self, from: data) }
-        catch { throw MicrosoftGraphError.invalidResponse(error.localizedDescription) }
+        var nextURL = components.url
+        var unseen: [EmailMessage] = []
+        var visitedURLs = Set<URL>()
 
-        return response.value.compactMap { message in
-            guard let date = MicrosoftGraph.date(message.receivedDateTime) else { return nil }
-            let sender = message.from?.emailAddress
-            return EmailMessage(
-                id: "outlook:\(account.providerAccountID):\(message.id)",
-                provider: .outlook,
-                accountID: account.id,
-                accountEmail: account.email,
-                threadID: "outlook:\(account.providerAccountID):\(message.conversationId ?? message.id)",
-                senderName: sender?.name ?? sender?.address ?? "Unknown sender",
-                senderEmail: sender?.address ?? "",
-                subject: message.subject ?? "(no subject)",
-                preview: message.bodyPreview ?? "",
-                body: message.bodyPreview ?? "",
-                receivedDate: date,
-                isRead: message.isRead ?? false,
-                providerImportance: message.importance
+        // Follow Graph's nextLink until there is one more unseen message than
+        // this bounded batch can process, or until the query is truly exhausted.
+        // This prevents known messages on page one from hiding an older backlog.
+        while let url = nextURL, unseen.count <= limit {
+            guard visitedURLs.insert(url).inserted else {
+                throw MicrosoftGraphError.invalidResponse(
+                    "Microsoft Graph returned a repeated page while scanning messages."
+                )
+            }
+            let data = try await MicrosoftGraph.get(
+                url,
+                token: token,
+                preferImmutableIDs: true,
+                session: session
             )
+            let response: Response
+            do { response = try JSONDecoder().decode(Response.self, from: data) }
+            catch { throw MicrosoftGraphError.invalidResponse(error.localizedDescription) }
+
+            for message in response.value {
+                guard let mapped = map(
+                    message,
+                    account: account,
+                    excludingMessageIDs: excludingMessageIDs
+                ) else { continue }
+                unseen.append(mapped)
+                if unseen.count > limit { break }
+            }
+            nextURL = response.nextLink.flatMap { URL(string: $0) }
         }
+
+        return EmailFetchBatch(
+            messages: Array(unseen.prefix(limit)),
+            hasMore: unseen.count > limit
+        )
     }
 
     private struct Response: Decodable {
         let value: [Message]
+        let nextLink: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case value
+            case nextLink = "@odata.nextLink"
+        }
+
         struct Message: Decodable {
             let id: String
             let conversationId: String?
@@ -104,6 +154,32 @@ struct OutlookMailService: EmailProviderService {
         }
         struct Recipient: Decodable { let emailAddress: Address }
         struct Address: Decodable { let name: String?; let address: String? }
+    }
+
+    private func map(
+        _ message: Response.Message,
+        account: EmailAccount,
+        excludingMessageIDs: Set<String>
+    ) -> EmailMessage? {
+        guard let date = MicrosoftGraph.date(message.receivedDateTime) else { return nil }
+        let sender = message.from?.emailAddress
+        let messageID = "outlook:\(account.providerAccountID):\(message.id)"
+        guard !excludingMessageIDs.contains(messageID) else { return nil }
+        return EmailMessage(
+            id: messageID,
+            provider: .outlook,
+            accountID: account.id,
+            accountEmail: account.email,
+            threadID: "outlook:\(account.providerAccountID):\(message.conversationId ?? message.id)",
+            senderName: sender?.name ?? sender?.address ?? "Unknown sender",
+            senderEmail: sender?.address ?? "",
+            subject: message.subject ?? "(no subject)",
+            preview: message.bodyPreview ?? "",
+            body: message.bodyPreview ?? "",
+            receivedDate: date,
+            isRead: message.isRead ?? false,
+            providerImportance: message.importance
+        )
     }
 }
 

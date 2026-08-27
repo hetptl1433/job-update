@@ -90,7 +90,7 @@ struct TasksView: View {
             Text("Suggestions · \(tasks.suggestions.count)").sectionLabel()
             ForEach(tasks.suggestions) { item in
                 HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-                    Button { tasks.acceptSuggestion(item) } label: {
+                    Button { app.acceptTaskSuggestion(item) } label: {
                         Image(systemName: "plus.circle")
                             .font(.title3)
                             .foregroundStyle(AppTheme.primaryText)
@@ -103,7 +103,7 @@ struct TasksView: View {
                         }
                     }
                     Spacer(minLength: AppTheme.Spacing.sm)
-                    Button { tasks.dismissSuggestion(item) } label: {
+                    Button { app.dismissTaskSuggestion(item) } label: {
                         Image(systemName: "xmark").font(.caption).foregroundStyle(AppTheme.tertiaryText)
                     }
                     .buttonStyle(.plain)

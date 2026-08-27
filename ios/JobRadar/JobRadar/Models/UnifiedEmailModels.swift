@@ -121,7 +121,37 @@ struct EmailMessage: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
+/// One bounded provider result. `hasMore` is authoritative: when true Orbit
+/// records the returned IDs but deliberately keeps the prior cursor so the
+/// remaining backlog is discoverable on the next scan.
+struct EmailFetchBatch: Equatable, Sendable {
+    var messages: [EmailMessage]
+    var hasMore: Bool
+}
+
 protocol EmailProviderService {
     var provider: EmailProviderType { get }
-    func recentMessages(account: EmailAccount, maxResults: Int, token: String) async throws -> [EmailMessage]
+    func recentMessageBatch(
+        account: EmailAccount,
+        maxResults: Int,
+        token: String,
+        receivedAfter: Date?,
+        excludingMessageIDs: Set<String>
+    ) async throws -> EmailFetchBatch
+}
+
+extension EmailProviderService {
+    func recentMessages(
+        account: EmailAccount,
+        maxResults: Int,
+        token: String
+    ) async throws -> [EmailMessage] {
+        try await recentMessageBatch(
+            account: account,
+            maxResults: maxResults,
+            token: token,
+            receivedAfter: nil,
+            excludingMessageIDs: []
+        ).messages
+    }
 }

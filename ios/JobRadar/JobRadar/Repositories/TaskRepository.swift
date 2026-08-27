@@ -44,13 +44,19 @@ final class TaskRepository: ObservableObject {
         watchSync.publish(tasks: tasks)
     }
 
-    func add(_ item: TaskItem) {
+    @discardableResult
+    func add(_ item: TaskItem) -> Bool {
         var value = item
         value.title = value.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.title.isEmpty else { return }
+        guard !value.title.isEmpty else { return false }
         value.updatedAt = .now
+        let previous = tasks
         tasks.append(value)
-        persistAndSynchronize(value.id)
+        guard persistAndSynchronize(value.id) else {
+            tasks = previous
+            return false
+        }
+        return true
     }
 
     func update(_ item: TaskItem) {
@@ -92,8 +98,13 @@ final class TaskRepository: ObservableObject {
         update(value)
     }
 
-    func propose(from messages: [InboxMessage], updates: [DetectedJobUpdate]) {
+    func propose(
+        from messages: [InboxMessage],
+        updates: [DetectedJobUpdate],
+        excludingResolvedEmailIDs: Set<String> = []
+    ) {
         let existingLinks = Set(tasks.compactMap(\.relatedEmailID))
+            .union(excludingResolvedEmailIDs)
         var proposed = messages.filter { $0.actionRequired && !existingLinks.contains($0.id) }.map { message in
             TaskItem(
                 title: "Respond: \(message.sender)",
@@ -118,9 +129,11 @@ final class TaskRepository: ObservableObject {
             .compactMap(\.value.first)
     }
 
-    func acceptSuggestion(_ item: TaskItem) {
-        add(item)
+    @discardableResult
+    func acceptSuggestion(_ item: TaskItem) -> Bool {
+        guard add(item) else { return false }
         suggestions.removeAll { $0.id == item.id }
+        return true
     }
 
     func dismissSuggestion(_ item: TaskItem) { suggestions.removeAll { $0.id == item.id } }
@@ -172,11 +185,13 @@ final class TaskRepository: ObservableObject {
         }
     }
 
-    private func persistAndSynchronize(_ id: UUID) {
-        persist()
-        guard let task = tasks.first(where: { $0.id == id }) else { return }
+    @discardableResult
+    private func persistAndSynchronize(_ id: UUID) -> Bool {
+        guard persist() else { return false }
+        guard let task = tasks.first(where: { $0.id == id }) else { return true }
         Task { await TaskAlertScheduler.shared.synchronize(task: task) }
         if calendarSyncEnabled { synchronizeToApple(id) }
+        return true
     }
 
     private func synchronizeToApple(_ id: UUID) {
@@ -194,10 +209,12 @@ final class TaskRepository: ObservableObject {
         }
     }
 
-    private func persist() {
-        _ = SharedTaskStore.save(tasks)
+    @discardableResult
+    private func persist() -> Bool {
+        guard SharedTaskStore.save(tasks) else { return false }
         watchSync.publish(tasks: tasks)
         WidgetCenter.shared.reloadTimelines(ofKind: "OrbitTasksWidget")
         WidgetCenter.shared.reloadTimelines(ofKind: "OrbitRemindersWidget")
+        return true
     }
 }

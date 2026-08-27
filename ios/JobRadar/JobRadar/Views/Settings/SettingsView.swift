@@ -21,6 +21,10 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppearanceMode.storageKey) private var appearanceRaw = AppearanceMode.system.rawValue
     @AppStorage("dailyBriefEnabled") private var dailyBriefEnabled = true
+    @AppStorage(AppConfig.openAIModelPreferenceKey)
+    private var selectedTextModel = AppConfig.bundledOpenAIModel
+    @AppStorage(AppConfig.openAIRealtimeModelPreferenceKey)
+    private var selectedRealtimeModel = AppConfig.bundledOpenAIRealtimeModel
     @State private var adminPassword = ""
     @State private var showDisconnectConfirm = false
     @State private var showChatGPTSheet = false
@@ -48,6 +52,12 @@ struct SettingsView: View {
             .sheet(isPresented: $showChatGPTSheet) { ConnectChatGPTView().environmentObject(app) }
             .onAppear {
                 adminPassword = KeychainStore.get(KeychainKeys.adminPassword) ?? ""
+                if selectedTextModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    selectedTextModel = AppConfig.bundledOpenAIModel
+                }
+                if selectedRealtimeModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    selectedRealtimeModel = AppConfig.bundledOpenAIRealtimeModel
+                }
             }
             .confirmationDialog("Disconnect account?", isPresented: $showDisconnectConfirm, titleVisibility: .visible) {
                 Button("Disconnect", role: .destructive) {
@@ -190,9 +200,44 @@ struct SettingsView: View {
                         .font(.caption.weight(.semibold))
                 }
             }
+            Picker("Assistant & email model", selection: $selectedTextModel) {
+                ForEach(AppConfig.textModelChoices(including: selectedTextModel)) { choice in
+                    Text(choice.name + (choice.isRecommended ? " · Recommended" : ""))
+                        .tag(choice.id)
+                }
+            }
+            Text(selectedTextModelChoice.detail)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+            Picker("Live voice model", selection: $selectedRealtimeModel) {
+                ForEach(AppConfig.realtimeModelChoices(including: selectedRealtimeModel)) { choice in
+                    Text(choice.name + (choice.isRecommended ? " · Recommended" : ""))
+                        .tag(choice.id)
+                }
+            }
+            Text(selectedRealtimeModelChoice.detail)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+            AssistantMemorySettingsSummary(memory: app.assistantMemory)
             Text("Personal development mode. The key is validated, stored in Keychain, and never logged. Use a backend-held key before distributing the app.")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
+            Text("The assistant and email scanner share the selected text model. Live voice changes apply the next time you start a session. Model availability and API charges depend on your OpenAI project.")
+                .font(.caption).foregroundStyle(AppTheme.secondaryText)
+            Text("Personal Memory is stored on this iPhone. Orbit saves explicit requests immediately; optional chat suggestions require your approval. It is context—not training—and can be reviewed or deleted anytime.")
+                .font(.caption).foregroundStyle(AppTheme.secondaryText)
         }
+    }
+
+    private var selectedTextModelChoice: AIModelChoice {
+        AppConfig.textModelChoices(including: selectedTextModel)
+            .first { $0.id == selectedTextModel }
+            ?? AIModelChoice(id: selectedTextModel, name: selectedTextModel, detail: selectedTextModel)
+    }
+
+    private var selectedRealtimeModelChoice: AIModelChoice {
+        AppConfig.realtimeModelChoices(including: selectedRealtimeModel)
+            .first { $0.id == selectedRealtimeModel }
+            ?? AIModelChoice(id: selectedRealtimeModel, name: selectedRealtimeModel, detail: selectedRealtimeModel)
     }
 
     // MARK: Siri and widgets
@@ -281,6 +326,154 @@ struct SettingsView: View {
         Section {
             Button("Sign Out") { app.signOut(); dismiss() }
             Button("Disconnect Account", role: .destructive) { showDisconnectConfirm = true }
+        }
+    }
+}
+
+private struct AssistantMemorySettingsSummary: View {
+    @ObservedObject var memory: AssistantMemoryRepository
+
+    var body: some View {
+        Toggle("Personal memory", isOn: Binding(
+            get: { memory.isEnabled },
+            set: { _ = memory.setEnabled($0) }
+        ))
+        .tint(AppTheme.brand)
+        NavigationLink {
+            AssistantMemorySettingsView()
+        } label: {
+            LabeledContent(
+                "What Orbit remembers",
+                value: memory.pendingSuggestions.isEmpty
+                    ? "\(memory.memories.count)"
+                    : "\(memory.memories.count) saved · \(memory.pendingSuggestions.count) suggested"
+            )
+        }
+    }
+}
+
+struct AssistantMemorySettingsView: View {
+    @EnvironmentObject private var app: AppState
+
+    var body: some View {
+        AssistantMemorySettingsContent(memory: app.assistantMemory)
+            .navigationTitle("Personal Memory")
+            .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct AssistantMemorySettingsContent: View {
+    @ObservedObject var memory: AssistantMemoryRepository
+    @State private var draft = ""
+    @State private var validationMessage: String?
+    @State private var showClearConfirmation = false
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Use Personal Memory", isOn: Binding(
+                    get: { memory.isEnabled },
+                    set: { _ = memory.setEnabled($0) }
+                ))
+                .tint(AppTheme.brand)
+                Toggle("Suggest memories from chats", isOn: Binding(
+                    get: { memory.suggestionsEnabled },
+                    set: { _ = memory.setSuggestionsEnabled($0) }
+                ))
+                .tint(AppTheme.brand)
+                .disabled(!memory.isEnabled)
+            } footer: {
+                Text("Relevant approved memories are included with future assistant requests. Suggestions are found locally from direct statements such as “I prefer…” and stay pending until you approve them.")
+            }
+
+            Section("Add a memory") {
+                TextField("Example: I prefer short, direct answers", text: $draft, axis: .vertical)
+                    .lineLimit(2...4)
+                Button("Remember this") { saveDraft() }
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !memory.isEnabled)
+                if let validationMessage {
+                    Text(validationMessage)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+
+            Section("Saved · \(memory.memories.count)") {
+                if memory.memories.isEmpty {
+                    Text("Nothing saved yet. In Chat, you can also say “Remember that I prefer…”")
+                        .foregroundStyle(AppTheme.secondaryText)
+                } else {
+                    ForEach(memory.memories) { item in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.text)
+                            Text(item.category.rawValue.capitalized)
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                        .swipeActions {
+                            Button("Delete", role: .destructive) { memory.delete(item) }
+                        }
+                    }
+                }
+            }
+
+            if !memory.pendingSuggestions.isEmpty {
+                Section("Suggested · \(memory.pendingSuggestions.count)") {
+                    ForEach(memory.pendingSuggestions) { suggestion in
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                            Text(suggestion.text)
+                            HStack {
+                                Button("Not now") {
+                                    _ = memory.dismissSuggestion(suggestion)
+                                }
+                                .buttonStyle(.bordered)
+                                Button("Remember") {
+                                    _ = memory.acceptSuggestion(suggestion)
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !memory.memories.isEmpty {
+                Section {
+                    Button("Delete All Memories", role: .destructive) {
+                        showClearConfirmation = true
+                    }
+                }
+            }
+
+            Section("Privacy") {
+                Text("Orbit stores these entries in an owner-scoped, Data-Protected file on this iPhone. Raw email and chat transcripts are not copied into Personal Memory. Orbit blocks common password, key, PIN, and long identity or financial-number patterns.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+        }
+        .confirmationDialog(
+            "Delete every saved memory?",
+            isPresented: $showClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete All", role: .destructive) { memory.deleteAll() }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func saveDraft() {
+        switch memory.remember(draft) {
+        case .saved:
+            draft = ""
+            validationMessage = nil
+        case .duplicate:
+            validationMessage = "That memory is already saved."
+        case .disabled:
+            validationMessage = "Turn on Personal Memory first."
+        case .rejected(let reason):
+            validationMessage = reason
+        case .failed(let reason):
+            validationMessage = reason
         }
     }
 }

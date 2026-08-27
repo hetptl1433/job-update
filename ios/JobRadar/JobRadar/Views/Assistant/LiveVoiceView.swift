@@ -18,6 +18,7 @@ struct LiveVoiceView: View {
     @EnvironmentObject private var inbox: EmailRepository
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: [SortDescriptor(\JobApplication.updatedAt, order: .reverse)])
     private var jobs: [JobApplication]
 
@@ -43,14 +44,22 @@ struct LiveVoiceView: View {
     }
 
     var body: some View {
-        ZStack {
-            LiveVoiceBackdrop(phase: phase)
+        GeometryReader { proxy in
+            let layout = LiveVoiceLayoutMetrics(
+                size: proxy.size,
+                dynamicTypeSize: dynamicTypeSize
+            )
 
-            if hasAIConnection {
-                conversationSurface
-            } else {
-                connectionRequiredSurface
+            ZStack {
+                LiveVoiceBackdrop(phase: phase)
+
+                if hasAIConnection {
+                    conversationSurface(layout: layout)
+                } else {
+                    connectionRequiredSurface(layout: layout)
+                }
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showConnect) {
@@ -91,117 +100,193 @@ struct LiveVoiceView: View {
         }
     }
 
-    private var conversationSurface: some View {
+    private func conversationSurface(layout: LiveVoiceLayoutMetrics) -> some View {
         VStack(spacing: 0) {
             header
 
-            Spacer(minLength: 12)
-
-            VStack(spacing: 28) {
-                OrbitVoiceOrb(
-                    phase: phase,
-                    inputLevel: realtime.inputAudioLevel,
-                    outputLevel: realtime.outputAudioLevel
-                )
-
-                VStack(spacing: 7) {
-                    Text(statusTitle)
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .contentTransition(.numericText())
-
-                    Text(statusDetail)
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.58))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 310)
-
-                    if phase == .connecting {
-                        ProgressView()
-                            .tint(.white.opacity(0.85))
-                            .padding(.top, 4)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.2), value: phase)
-            }
-
-            Spacer(minLength: 18)
-
-            if captionsEnabled {
-                LiveCaptionsView(
-                    messages: messages,
-                    liveUserText: realtime.liveUserText,
-                    liveAssistantText: realtime.liveAssistantText
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            if layout.isLandscape {
+                landscapeConversationBody(layout: layout)
             } else {
-                Text("Talk naturally — you can interrupt Orbit at any time.")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.44))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-                    .frame(height: 54)
+                portraitConversationBody(layout: layout)
             }
 
-            controls
-                .padding(.top, 18)
-                .padding(.bottom, 10)
+            controls(layout: layout)
+                .padding(.top, layout.controlsTopPadding)
+                .padding(.bottom, layout.controlsBottomPadding)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, layout.horizontalPadding)
         .animation(.spring(response: 0.36, dampingFraction: 0.86), value: captionsEnabled)
     }
 
-    private var connectionRequiredSurface: some View {
+    @ViewBuilder
+    private func portraitConversationBody(layout: LiveVoiceLayoutMetrics) -> some View {
+        if layout.requiresBodyScroll {
+            ScrollView {
+                portraitConversationContent(layout: layout)
+            }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+        } else {
+            portraitConversationContent(layout: layout)
+                .frame(maxHeight: .infinity, alignment: .center)
+        }
+    }
+
+    private func portraitConversationContent(layout: LiveVoiceLayoutMetrics) -> some View {
+        VStack(spacing: layout.sectionSpacing) {
+            voiceOrb(layout: layout)
+            statusBlock(layout: layout)
+            captionsBlock(layout: layout)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, layout.bodyTopPadding)
+        .padding(.bottom, layout.bodyBottomPadding)
+    }
+
+    private func landscapeConversationBody(layout: LiveVoiceLayoutMetrics) -> some View {
+        ScrollView {
+            HStack(alignment: .center, spacing: layout.sectionSpacing) {
+                voiceOrb(layout: layout)
+
+                VStack(spacing: layout.sectionSpacing) {
+                    statusBlock(layout: layout)
+                    captionsBlock(layout: layout)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, layout.bodyTopPadding)
+        }
+        .scrollIndicators(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func voiceOrb(layout: LiveVoiceLayoutMetrics) -> some View {
+        OrbitVoiceOrb(
+            phase: phase,
+            inputLevel: realtime.inputAudioLevel,
+            outputLevel: realtime.outputAudioLevel,
+            diameter: layout.orbDiameter
+        )
+    }
+
+    private func statusBlock(layout: LiveVoiceLayoutMetrics) -> some View {
+        VStack(spacing: layout.statusSpacing) {
+            Text(statusTitle)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
+                .multilineTextAlignment(.center)
+                .contentTransition(.numericText())
+
+            Text(statusDetail)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.58))
+                .lineLimit(layout.statusLineLimit)
+                .minimumScaleFactor(0.82)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: layout.statusMaxWidth)
+
+            if phase == .connecting {
+                ProgressView()
+                    .tint(.white.opacity(0.85))
+                    .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(.easeInOut(duration: 0.2), value: phase)
+    }
+
+    @ViewBuilder
+    private func captionsBlock(layout: LiveVoiceLayoutMetrics) -> some View {
+        if captionsEnabled {
+            LiveCaptionsView(
+                messages: messages,
+                liveUserText: realtime.liveUserText,
+                liveAssistantText: realtime.liveAssistantText,
+                height: layout.captionHeight,
+                isScrollEnabled: !layout.requiresBodyScroll
+            )
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            Text("Talk naturally — you can interrupt Orbit at any time.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.44))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity, minHeight: layout.captionHeight)
+        }
+    }
+
+    private func connectionRequiredSurface(layout: LiveVoiceLayoutMetrics) -> some View {
         VStack(spacing: 0) {
             header
-            Spacer()
 
-            VStack(spacing: 22) {
-                ZStack {
-                    Circle()
-                        .fill(.white.opacity(0.07))
-                        .frame(width: 132, height: 132)
-                    Circle()
-                        .strokeBorder(.white.opacity(0.12), lineWidth: 1)
-                        .frame(width: 132, height: 132)
-                    Image(systemName: "waveform.and.mic")
-                        .font(.system(size: 42, weight: .medium))
-                        .foregroundStyle(.white)
-                }
+            ScrollView {
+                VStack(spacing: layout.connectionSpacing) {
+                    ZStack {
+                        Circle()
+                            .fill(.white.opacity(0.07))
+                            .frame(
+                                width: layout.connectionIconDiameter,
+                                height: layout.connectionIconDiameter
+                            )
+                        Circle()
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                            .frame(
+                                width: layout.connectionIconDiameter,
+                                height: layout.connectionIconDiameter
+                            )
+                        Image(systemName: "waveform.and.mic")
+                            .font(.system(
+                                size: layout.connectionIconDiameter * 0.32,
+                                weight: .medium
+                            ))
+                            .foregroundStyle(.white)
+                    }
 
-                VStack(spacing: 9) {
-                    Text("Connect ChatGPT for live voice")
-                        .font(.title2.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Text("Orbit needs your OpenAI connection to start a secure, live conversation. Your saved key is exchanged for a short-lived voice credential.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.58))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 330)
-                }
+                    VStack(spacing: 9) {
+                        Text("Connect ChatGPT for live voice")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                        Text("Orbit needs your OpenAI connection to start a secure, live conversation. Your saved key is exchanged for a short-lived voice credential.")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.58))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 330)
+                    }
 
-                Button {
-                    showConnect = true
-                } label: {
-                    Label("Connect ChatGPT", systemImage: "link")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.black)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    Button {
+                        showConnect = true
+                    } label: {
+                        Label("Connect ChatGPT", systemImage: "link")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(Color.black)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: 330)
                 }
-                .buttonStyle(.plain)
-                .frame(maxWidth: 330)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: layout.connectionContentMinHeight
+                )
+                .padding(.vertical, layout.bodyTopPadding)
+                .padding(.horizontal, 6)
             }
-            .padding(.horizontal, 24)
-
-            Spacer()
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
 
             Button("Not now") { endAndDismiss() }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.65))
-                .padding(.bottom, 28)
+                .padding(.vertical, 12)
         }
+        .padding(.horizontal, layout.horizontalPadding)
     }
 
     private var header: some View {
@@ -221,10 +306,13 @@ struct LiveVoiceView: View {
                 Text("Orbit Voice")
                     .font(.headline)
                     .foregroundStyle(.white)
+                    .lineLimit(1)
                 Text("Live conversation")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.48))
+                    .lineLimit(1)
             }
+            .layoutPriority(1)
 
             Spacer()
 
@@ -240,17 +328,19 @@ struct LiveVoiceView: View {
             .padding(.horizontal, 11)
             .padding(.vertical, 7)
             .background(.white.opacity(0.07), in: Capsule())
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.top, 8)
     }
 
-    private var controls: some View {
-        HStack(alignment: .top, spacing: 24) {
+    private func controls(layout: LiveVoiceLayoutMetrics) -> some View {
+        HStack(alignment: .top, spacing: layout.controlSpacing) {
             LiveVoiceControl(
                 title: realtime.isMuted ? "Unmute" : "Mute",
                 systemImage: realtime.isMuted ? "mic.slash.fill" : "mic.fill",
                 isSelected: realtime.isMuted,
-                isEnabled: realtime.isActive
+                isEnabled: realtime.isActive,
+                diameter: layout.controlDiameter
             ) {
                 realtime.toggleMute()
             }
@@ -258,7 +348,8 @@ struct LiveVoiceView: View {
             LiveVoiceControl(
                 title: "Captions",
                 systemImage: captionsEnabled ? "captions.bubble.fill" : "captions.bubble",
-                isSelected: captionsEnabled
+                isSelected: captionsEnabled,
+                diameter: layout.controlDiameter
             ) {
                 captionsEnabled.toggle()
             }
@@ -266,7 +357,8 @@ struct LiveVoiceView: View {
             if canRetry {
                 LiveVoiceControl(
                     title: "Retry",
-                    systemImage: "arrow.clockwise"
+                    systemImage: "arrow.clockwise",
+                    diameter: layout.controlDiameter
                 ) {
                     startLiveConversation()
                 }
@@ -276,7 +368,8 @@ struct LiveVoiceView: View {
             LiveVoiceControl(
                 title: "End",
                 systemImage: "phone.down.fill",
-                role: .end
+                role: .end,
+                diameter: layout.controlDiameter
             ) {
                 endAndDismiss()
             }
@@ -321,11 +414,11 @@ struct LiveVoiceView: View {
         case .listening:
             "Go ahead — just start talking."
         case .hearing:
-            realtime.liveUserText.isEmpty ? "Keep going…" : realtime.liveUserText
+            realtime.liveUserText.isEmpty ? "Keep going…" : "Listening to you…"
         case .thinking:
             "One moment while I work that through."
         case .speaking:
-            realtime.liveAssistantText.isEmpty ? "You can interrupt at any time." : realtime.liveAssistantText
+            "You can interrupt at any time."
         case .muted:
             "Tap Unmute when you want Orbit to hear you again."
         case let .failed(message):
@@ -357,19 +450,20 @@ struct LiveVoiceView: View {
             context: contextBuilder.liveContext(),
             history: messages
         )
+        let model = AppConfig.openAIRealtimeModel
 
         connectionTask = Task { @MainActor in
             defer { isMintingCredential = false }
             do {
                 let credential = try await RealtimeClientSecretProvider(apiKey: key)
                     .mintCredential(
-                        model: AppConfig.openAIRealtimeModel,
+                        model: model,
                         instructions: instructions
                     )
                 guard !Task.isCancelled else { return }
                 await realtime.connect(
                     credential: credential,
-                    model: AppConfig.openAIRealtimeModel,
+                    model: model,
                     instructions: ""
                 )
             } catch {
@@ -407,29 +501,92 @@ private struct LiveVoiceBackdrop: View {
     }
 
     var body: some View {
-        ZStack {
-            Color(hex: 0x080A0F).ignoresSafeArea()
+        GeometryReader { proxy in
+            ZStack {
+                Color(hex: 0x080A0F)
 
-            Circle()
-                .fill(glow.opacity(0.2))
-                .frame(width: 460, height: 460)
-                .blur(radius: 100)
-                .offset(x: -170, y: -310)
+                Circle()
+                    .fill(glow.opacity(0.2))
+                    .frame(width: 460, height: 460)
+                    .blur(radius: 100)
+                    .offset(x: -170, y: -310)
 
-            Circle()
-                .fill(Color(hex: 0x7156C8).opacity(0.13))
-                .frame(width: 390, height: 390)
-                .blur(radius: 110)
-                .offset(x: 180, y: 340)
+                Circle()
+                    .fill(Color(hex: 0x7156C8).opacity(0.13))
+                    .frame(width: 390, height: 390)
+                    .blur(radius: 110)
+                    .offset(x: 180, y: 340)
 
-            LinearGradient(
-                colors: [.clear, Color.black.opacity(0.34)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+                LinearGradient(
+                    colors: [.clear, Color.black.opacity(0.34)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
         }
+        .ignoresSafeArea()
         .animation(.easeInOut(duration: 0.55), value: phase)
+    }
+}
+
+/// Derives every large visual measurement from the presented safe-area size.
+/// An iPhone 15 receives a smaller hero than a Pro Max, while short screens,
+/// landscape, and accessibility text keep the header and call controls pinned.
+private struct LiveVoiceLayoutMetrics {
+    let size: CGSize
+    let dynamicTypeSize: DynamicTypeSize
+
+    var isLandscape: Bool { size.width > size.height }
+    private var isShort: Bool { size.height < 780 }
+    private var usesAccessibilityText: Bool { dynamicTypeSize.isAccessibilitySize }
+
+    var horizontalPadding: CGFloat {
+        size.width < 380 ? 14 : 18
+    }
+
+    var orbDiameter: CGFloat {
+        if isLandscape {
+            let proposed = min(size.width * 0.22, size.height * 0.36)
+            return min(150, max(116, proposed))
+        }
+
+        let heightRatio: CGFloat = isShort ? 0.25 : 0.275
+        let accessibilityScale: CGFloat = usesAccessibilityText ? 0.78 : 1
+        let proposed = min(size.width * 0.62, size.height * heightRatio, 238)
+        return max(158, proposed * accessibilityScale)
+    }
+
+    var captionHeight: CGFloat {
+        if isLandscape { return min(92, max(70, size.height * 0.22)) }
+        if usesAccessibilityText { return min(118, max(92, size.height * 0.14)) }
+        return min(112, max(86, size.height * 0.135))
+    }
+
+    var statusMaxWidth: CGFloat {
+        isLandscape ? min(360, size.width * 0.48) : min(320, size.width - 48)
+    }
+
+    var statusLineLimit: Int { usesAccessibilityText ? 4 : 3 }
+    var requiresBodyScroll: Bool { isLandscape || usesAccessibilityText || size.height < 700 }
+    var statusSpacing: CGFloat { isShort || isLandscape ? 5 : 7 }
+    var sectionSpacing: CGFloat { isLandscape ? 14 : (isShort ? 12 : 18) }
+    var bodyTopPadding: CGFloat { isLandscape ? 4 : (isShort ? 8 : 14) }
+    var bodyBottomPadding: CGFloat { isLandscape ? 4 : (isShort ? 8 : 12) }
+    var controlsTopPadding: CGFloat { isLandscape || isShort ? 6 : 10 }
+    var controlsBottomPadding: CGFloat { isLandscape ? 2 : 8 }
+    var controlSpacing: CGFloat { size.width < 380 ? 2 : 6 }
+    var controlDiameter: CGFloat { isLandscape || isShort ? 48 : 52 }
+    var connectionSpacing: CGFloat { isLandscape || isShort ? 14 : 22 }
+
+    var connectionIconDiameter: CGFloat {
+        if isLandscape { return min(96, max(72, size.height * 0.24)) }
+        return min(124, max(94, size.height * 0.15))
+    }
+
+    var connectionContentMinHeight: CGFloat {
+        max(0, size.height - (isLandscape ? 112 : 132))
     }
 }
 
@@ -437,6 +594,7 @@ private struct OrbitVoiceOrb: View {
     let phase: LiveVoicePhase
     let inputLevel: Float
     let outputLevel: Float
+    let diameter: CGFloat
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animating = false
@@ -462,16 +620,18 @@ private struct OrbitVoiceOrb: View {
     }
 
     var body: some View {
+        let scale = diameter / 270
+
         ZStack {
             Circle()
                 .fill(colors[1].opacity(0.16))
-                .frame(width: 252, height: 252)
-                .blur(radius: 28)
+                .frame(width: diameter * 0.933, height: diameter * 0.933)
+                .blur(radius: 28 * scale)
                 .scaleEffect((animating && isAnimatedPhase ? 1.08 : 0.94) + level * 0.1)
 
             Circle()
                 .stroke(colors[0].opacity(0.18), lineWidth: 1)
-                .frame(width: 222, height: 222)
+                .frame(width: diameter * 0.822, height: diameter * 0.822)
                 .scaleEffect(1 + level * 0.14)
 
             Circle()
@@ -479,11 +639,11 @@ private struct OrbitVoiceOrb: View {
                     RadialGradient(
                         colors: [colors[0], colors[1], colors[2]],
                         center: .topLeading,
-                        startRadius: 5,
-                        endRadius: 145
+                        startRadius: 5 * scale,
+                        endRadius: diameter * 0.537
                     )
                 )
-                .frame(width: 188, height: 188)
+                .frame(width: diameter * 0.696, height: diameter * 0.696)
                 .overlay {
                     Circle()
                         .fill(
@@ -501,18 +661,22 @@ private struct OrbitVoiceOrb: View {
                             AngularGradient(colors: [.clear, .white.opacity(0.62), .clear], center: .center),
                             style: StrokeStyle(lineWidth: 2, lineCap: .round)
                         )
-                        .padding(11)
+                        .padding(11 * scale)
                         .rotationEffect(.degrees(animating && !reduceMotion ? 360 : 0))
                 }
-                .shadow(color: colors[1].opacity(0.48), radius: 38, y: 14)
+                .shadow(
+                    color: colors[1].opacity(0.48),
+                    radius: 38 * scale,
+                    y: 14 * scale
+                )
                 .scaleEffect(1 + level * 0.11)
 
             Image(systemName: orbSymbol)
-                .font(.system(size: 38, weight: .medium))
+                .font(.system(size: max(24, 38 * scale), weight: .medium))
                 .symbolEffect(.variableColor.iterative, options: .repeating, isActive: isAnimatedPhase)
                 .foregroundStyle(.white.opacity(0.92))
         }
-        .frame(width: 270, height: 270)
+        .frame(width: diameter, height: diameter)
         .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.72), value: level)
         .animation(.easeInOut(duration: 0.45), value: phase)
         .onAppear {
@@ -546,6 +710,8 @@ private struct LiveCaptionsView: View {
     let messages: [ChatMessage]
     let liveUserText: String
     let liveAssistantText: String
+    let height: CGFloat
+    let isScrollEnabled: Bool
 
     private var recentMessages: [ChatMessage] {
         Array(messages.suffix(liveUserText.isEmpty && liveAssistantText.isEmpty ? 2 : 1))
@@ -579,8 +745,10 @@ private struct LiveCaptionsView: View {
             .onChange(of: liveUserText) { _, _ in scrollToBottom(proxy) }
             .onChange(of: liveAssistantText) { _, _ in scrollToBottom(proxy) }
             .onChange(of: messages.count) { _, _ in scrollToBottom(proxy) }
+            .scrollDisabled(!isScrollEnabled)
         }
-        .frame(maxWidth: .infinity, minHeight: 86, maxHeight: 138)
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
         .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -620,6 +788,7 @@ private struct LiveVoiceControl: View {
     var isSelected = false
     var isEnabled = true
     var role: Role = .standard
+    var diameter: CGFloat = 54
     let action: () -> Void
 
     var body: some View {
@@ -628,17 +797,21 @@ private struct LiveVoiceControl: View {
                 Image(systemName: systemImage)
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(foreground)
-                    .frame(width: 54, height: 54)
+                    .frame(width: diameter, height: diameter)
                     .background(background, in: Circle())
                     .overlay(Circle().strokeBorder(border, lineWidth: 1))
                 Text(title)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.white.opacity(isEnabled ? 0.66 : 0.28))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
             }
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .accessibilityLabel(title)
+        .frame(maxWidth: .infinity)
     }
 
     private var foreground: Color {

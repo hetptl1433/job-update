@@ -509,6 +509,16 @@ final class FinanceInstitutionPresentationTests: XCTestCase {
         XCTAssertEqual(FinanceInstitutionBrand(institutionName: "A Local Credit Union"), .generic)
     }
 
+    func testRequestedInstitutionsResolveToOwnerSuppliedAssetCatalogMarks() {
+        XCTAssertEqual(FinanceInstitutionBrand.chase.officialLogoAssetName, "FinanceLogoChase")
+        XCTAssertEqual(
+            FinanceInstitutionBrand.americanExpress.officialLogoAssetName,
+            "FinanceLogoAmericanExpress"
+        )
+        XCTAssertEqual(FinanceInstitutionBrand.discover.officialLogoAssetName, "FinanceLogoDiscover")
+        XCTAssertNil(FinanceInstitutionBrand.generic.officialLogoAssetName)
+    }
+
     func testAccountKindsStayInSeparateBankCardAndOtherGroups() {
         XCTAssertEqual(account(id: "checking", itemID: "item", kind: .checking).group, .bank)
         XCTAssertEqual(account(id: "savings", itemID: "item", kind: .savings).group, .bank)
@@ -631,7 +641,21 @@ final class ProtectedSnapshotStoreTests: XCTestCase {
 
         XCTAssertEqual(store.load(ownerID: "owner-a")?.value, Fixture(value: "cached"))
         XCTAssertNil(store.load(ownerID: "owner-b"))
-        store.remove()
+        XCTAssertTrue(store.remove())
+        XCTAssertNil(store.load(ownerID: "owner-a"))
+    }
+
+    func testSnapshotReportsAWriteFailure() throws {
+        let blockingFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("orbit-snapshot-blocker-\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blockingFile)
+        defer { try? FileManager.default.removeItem(at: blockingFile) }
+        let store = ProtectedSnapshotStore<Fixture>(
+            filename: "fixture.json",
+            directory: blockingFile.appendingPathComponent("child", isDirectory: true)
+        )
+
+        XCTAssertFalse(store.save(Fixture(value: "cached"), ownerID: "owner-a"))
         XCTAssertNil(store.load(ownerID: "owner-a"))
     }
 
@@ -712,6 +736,615 @@ final class AssistantConversationModelTests: XCTestCase {
     }
 }
 
+@MainActor
+final class AssistantMemoryTests: XCTestCase {
+    func testExplicitCommandsDoNotTreatOrdinaryConversationAsAMemoryWrite() {
+        XCTAssertEqual(
+            AssistantMemoryCommand.parse("Please remember that I prefer short answers"),
+            .remember("I prefer short answers")
+        )
+        XCTAssertEqual(
+            AssistantMemoryCommand.parse("forget that I prefer short answers"),
+            .forget("I prefer short answers")
+        )
+        XCTAssertEqual(AssistantMemoryCommand.parse("clear my memories"), .forgetAll)
+        XCTAssertNil(AssistantMemoryCommand.parse("I prefer short answers"))
+    }
+
+    func testMemoryIsDurableOwnerScopedAndCanBeDisabled() throws {
+        let directory = temporaryTestDirectory("assistant-memory")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let first = AssistantMemoryRepository(directory: directory)
+        first.load(ownerID: "owner-a")
+        guard case .saved(let saved) = first.remember("I prefer short, direct answers") else {
+            return XCTFail("Expected an approved memory to be saved")
+        }
+        XCTAssertEqual(saved.category, .communication)
+
+        let restored = AssistantMemoryRepository(directory: directory)
+        restored.load(ownerID: "owner-a")
+        XCTAssertEqual(restored.memories.map(\.text), ["I prefer short, direct answers"])
+        XCTAssertEqual(
+            restored.relevant(for: "How should you answer me?").map(\.text),
+            ["I prefer short, direct answers"]
+        )
+
+        restored.setEnabled(false)
+        XCTAssertTrue(restored.relevant(for: "How should you answer me?").isEmpty)
+
+        let otherOwner = AssistantMemoryRepository(directory: directory)
+        otherOwner.load(ownerID: "owner-b")
+        XCTAssertTrue(otherOwner.memories.isEmpty)
+        guard case .saved = otherOwner.remember("My goal is to learn Swift") else {
+            return XCTFail("The second owner should have independent memory")
+        }
+
+        let firstOwnerAgain = AssistantMemoryRepository(directory: directory)
+        firstOwnerAgain.load(ownerID: "owner-a")
+        XCTAssertEqual(firstOwnerAgain.memories.map(\.text), ["I prefer short, direct answers"])
+    }
+
+    func testMemoryRejectsSecretsAndLongFinancialIdentifiers() {
+        let directory = temporaryTestDirectory("assistant-sensitive")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let memory = AssistantMemoryRepository(directory: directory)
+        memory.load(ownerID: "owner")
+
+        guard case .rejected = memory.remember("My password is violet") else {
+            return XCTFail("Passwords must not enter Personal Memory")
+        }
+        guard case .rejected = memory.remember("My account number is 123456789") else {
+            return XCTFail("Long financial identifiers must not enter Personal Memory")
+        }
+        XCTAssertTrue(memory.memories.isEmpty)
+    }
+
+    func testMemoryDoesNotClaimSavedWhenProtectedWriteFails() throws {
+        let blockingFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("orbit-memory-blocker-\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blockingFile)
+        defer { try? FileManager.default.removeItem(at: blockingFile) }
+        let impossibleDirectory = blockingFile.appendingPathComponent("child", isDirectory: true)
+        let memory = AssistantMemoryRepository(directory: impossibleDirectory)
+        memory.load(ownerID: "owner")
+
+        guard case .failed = memory.remember("I prefer concise answers") else {
+            return XCTFail("A failed disk write must not be reported as saved")
+        }
+        XCTAssertTrue(memory.memories.isEmpty)
+    }
+
+    func testPromptSeparatesApprovedMemoryFromInstructionsAndKeepsTransparencyRule() {
+        let context = AssistantContext(
+            userName: "Het",
+            lines: ["Task: Call recruiter"],
+            memoryLines: ["Preference: I prefer short answers"]
+        )
+        let input = AssistantPrompt.conversationInput(
+            prompt: "What should I do?",
+            history: [],
+            context: context
+        )
+
+        XCTAssertTrue(input.contains("USER-APPROVED SAVED MEMORY"))
+        XCTAssertTrue(input.contains("Preference: I prefer short answers"))
+        XCTAssertTrue(input.contains("CURRENT ORBIT DATA"))
+        XCTAssertTrue(AssistantPrompt.system.contains("Never pretend to be human"))
+    }
+
+    func testChatLearningSuggestionsStayPendingUntilApproved() {
+        let directory = temporaryTestDirectory("assistant-suggestions")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let memory = AssistantMemoryRepository(directory: directory)
+        memory.load(ownerID: "owner")
+        XCTAssertTrue(memory.setSuggestionsEnabled(true))
+
+        XCTAssertTrue(memory.suggestMemory(from: "I prefer concise answers"))
+        XCTAssertTrue(memory.memories.isEmpty)
+        let suggestion = try? XCTUnwrap(memory.pendingSuggestions.first)
+        XCTAssertTrue(memory.relevant(for: "How should you answer?").isEmpty)
+        XCTAssertTrue(memory.approvedForLiveSession().isEmpty)
+
+        if let suggestion {
+            guard case .saved = memory.acceptSuggestion(suggestion) else {
+                return XCTFail("An approved suggestion should become memory")
+            }
+        }
+        XCTAssertEqual(memory.memories.map(\.text), ["I prefer concise answers"])
+        XCTAssertTrue(memory.pendingSuggestions.isEmpty)
+        XCTAssertEqual(
+            memory.approvedForLiveSession().map(\.text),
+            ["I prefer concise answers"]
+        )
+    }
+
+    func testUnrelatedMemoriesAreNotSentAsContext() {
+        let directory = temporaryTestDirectory("assistant-relevance")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let memory = AssistantMemoryRepository(directory: directory)
+        memory.load(ownerID: "owner")
+        guard case .saved = memory.remember("I usually run before breakfast") else {
+            return XCTFail("Expected routine to save")
+        }
+
+        XCTAssertTrue(memory.relevant(for: "Help me write a recruiter email").isEmpty)
+        XCTAssertEqual(
+            memory.relevant(for: "What is my breakfast routine?").map(\.text),
+            ["I usually run before breakfast"]
+        )
+    }
+
+    func testForgetRequiresAWholeWordMatch() {
+        let directory = temporaryTestDirectory("assistant-forget")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let memory = AssistantMemoryRepository(directory: directory)
+        memory.load(ownerID: "owner")
+        guard case .saved = memory.remember("AI") else {
+            return XCTFail("Expected memory to save")
+        }
+
+        XCTAssertFalse(memory.forget(matching: "chair"))
+        XCTAssertEqual(memory.memories.map(\.text), ["AI"])
+        XCTAssertTrue(memory.forget(matching: "AI"))
+        XCTAssertTrue(memory.memories.isEmpty)
+    }
+}
+
+@MainActor
+final class IncrementalEmailScanTests: XCTestCase {
+    func testSuccessfulScanRestoresPendingUpdatesCursorAndProcessedIDs() throws {
+        let directory = temporaryTestDirectory("email-scan")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let completedAt = Date(timeIntervalSince1970: 1_786_435_200)
+        let receivedAt = completedAt.addingTimeInterval(-120)
+        let message = emailMessage(id: "gmail:account-a:message-1", receivedAt: receivedAt)
+        let update = jobUpdate(sourceMessageID: message.id)
+
+        let first = EmailScanHistoryStore(directory: directory)
+        first.load(ownerID: "owner-a")
+        first.recordSuccessfulAnalysis(
+            accountID: "gmail:account-a",
+            messages: [message],
+            jobUpdates: [update],
+            cursorDate: completedAt
+        )
+
+        let restored = EmailScanHistoryStore(directory: directory)
+        restored.load(ownerID: "owner-a")
+        XCTAssertEqual(restored.processedMessageIDs(for: "gmail:account-a"), [message.id])
+        XCTAssertEqual(
+            restored.receivedAfter(for: "gmail:account-a"),
+            completedAt.addingTimeInterval(-600)
+        )
+        XCTAssertEqual(restored.pendingJobUpdates, [update])
+
+        restored.recordJobDecision(.dismissed, for: update)
+        let afterDecision = EmailScanHistoryStore(directory: directory)
+        afterDecision.load(ownerID: "owner-a")
+        XCTAssertTrue(afterDecision.pendingJobUpdates.isEmpty)
+
+        let otherOwner = EmailScanHistoryStore(directory: directory)
+        otherOwner.load(ownerID: "owner-b")
+        XCTAssertTrue(otherOwner.processedMessageIDs(for: "gmail:account-a").isEmpty)
+        XCTAssertTrue(otherOwner.pendingJobUpdates.isEmpty)
+    }
+
+    func testStableJobDecisionKeyAndCrossAccountMessageIDsDoNotCollide() {
+        let first = jobUpdate(sourceMessageID: "gmail:account-a:same-provider-id")
+        let repeated = jobUpdate(sourceMessageID: "gmail:account-a:same-provider-id")
+        let otherAccount = jobUpdate(sourceMessageID: "gmail:account-b:same-provider-id")
+
+        XCTAssertEqual(first.decisionKey, repeated.decisionKey)
+        XCTAssertNotEqual(first.decisionKey, otherAccount.decisionKey)
+    }
+
+    func testInboxMergeRetainsPriorResultsAndPrunesExpiredMessages() {
+        let directory = temporaryTestDirectory("inbox-merge")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repository = EmailRepository(snapshotStore: ProtectedSnapshotStore(
+            filename: "inbox.json",
+            directory: directory
+        ))
+        let now = Date(timeIntervalSince1970: 1_786_435_200)
+        let current = inboxMessage(id: "current", receivedAt: now.addingTimeInterval(-60))
+        let expired = inboxMessage(id: "expired", receivedAt: now.addingTimeInterval(-61 * 24 * 60 * 60))
+
+        repository.setMessages([current, expired])
+        repository.finishRefreshWithoutChanges(now: now)
+        XCTAssertEqual(Set(repository.allMessages.map(\.id)), ["current"])
+
+        let newer = inboxMessage(id: "new", receivedAt: now)
+        repository.mergeMessages([newer], now: now)
+        XCTAssertEqual(Set(repository.allMessages.map(\.id)), ["current", "new"])
+    }
+
+    func testTaskDecisionSurvivesReload() {
+        let directory = temporaryTestDirectory("email-task-decision")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = EmailScanHistoryStore(directory: directory)
+        first.load(ownerID: "owner")
+        first.recordSuccessfulAnalysis(
+            accountID: "gmail:account-a",
+            messages: [emailMessage(id: "gmail:account-a:message-1")],
+            jobUpdates: []
+        )
+        first.recordTaskDecision(.dismissed, sourceMessageID: "gmail:account-a:message-1")
+        _ = first.removeAccount(EmailAccount(
+            provider: .gmail,
+            providerAccountID: "account-a",
+            email: "person@example.com",
+            displayName: "Person"
+        ))
+
+        let restored = EmailScanHistoryStore(directory: directory)
+        restored.load(ownerID: "owner")
+        XCTAssertEqual(restored.resolvedTaskMessageIDs, ["gmail:account-a:message-1"])
+    }
+
+    func testBackloggedBatchRecordsIDsWithoutAdvancingCursor() {
+        let directory = temporaryTestDirectory("email-backlog")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let history = EmailScanHistoryStore(directory: directory)
+        history.load(ownerID: "owner")
+        let message = emailMessage(id: "gmail:account-a:message-41")
+
+        XCTAssertTrue(history.recordSuccessfulAnalysis(
+            accountID: "gmail:account-a",
+            messages: [message],
+            jobUpdates: [],
+            cursorDate: nil
+        ))
+        XCTAssertEqual(history.processedMessageIDs(for: "gmail:account-a"), [message.id])
+        XCTAssertNil(history.receivedAfter(for: "gmail:account-a"))
+
+        let exhaustedAt = Date(timeIntervalSince1970: 1_786_435_200)
+        XCTAssertTrue(history.recordSuccessfulEmptyScan(
+            accountID: "gmail:account-a",
+            cursorDate: exhaustedAt
+        ))
+        XCTAssertEqual(
+            history.receivedAfter(for: "gmail:account-a"),
+            exhaustedAt.addingTimeInterval(-600)
+        )
+    }
+
+    func testFailedHistoryWriteRollsBackProcessedState() throws {
+        let blockingFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("orbit-history-blocker-\(UUID().uuidString)")
+        try Data("not a directory".utf8).write(to: blockingFile)
+        defer { try? FileManager.default.removeItem(at: blockingFile) }
+        let history = EmailScanHistoryStore(
+            directory: blockingFile.appendingPathComponent("child", isDirectory: true)
+        )
+        history.load(ownerID: "owner")
+        let message = emailMessage(id: "gmail:account-a:message-1")
+
+        XCTAssertFalse(history.recordSuccessfulAnalysis(
+            accountID: "gmail:account-a",
+            messages: [message],
+            jobUpdates: [],
+            cursorDate: .now
+        ))
+        XCTAssertTrue(history.processedMessageIDs(for: "gmail:account-a").isEmpty)
+        XCTAssertNil(history.receivedAfter(for: "gmail:account-a"))
+    }
+
+    func testFailedResetStillStartsAWorkingFullRescanWithoutRepeatingNewIDs() throws {
+        let directory = temporaryTestDirectory("email-reset")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let initial = EmailScanHistoryStore(directory: directory)
+        initial.load(ownerID: "owner")
+        let old = emailMessage(id: "gmail:account-a:old")
+        XCTAssertTrue(initial.recordSuccessfulAnalysis(
+            accountID: "gmail:account-a",
+            messages: [old],
+            jobUpdates: [],
+            cursorDate: .now
+        ))
+
+        // Replacing the writable directory with a file makes the reset fail.
+        try FileManager.default.removeItem(at: directory)
+        try Data("blocked".utf8).write(to: directory)
+        XCTAssertFalse(initial.resetProcessingStateKeepingDecisions())
+        XCTAssertNil(initial.receivedAfter(for: "gmail:account-a"))
+        XCTAssertTrue(initial.processedMessageIDs(for: "gmail:account-a").isEmpty)
+
+        try FileManager.default.removeItem(at: directory)
+        let newlyAnalyzed = emailMessage(id: "gmail:account-a:new")
+        XCTAssertTrue(initial.recordSuccessfulAnalysis(
+            accountID: "gmail:account-a",
+            messages: [newlyAnalyzed],
+            jobUpdates: [],
+            cursorDate: nil
+        ))
+        XCTAssertEqual(
+            initial.processedMessageIDs(for: "gmail:account-a"),
+            [newlyAnalyzed.id]
+        )
+        XCTAssertNil(initial.receivedAfter(for: "gmail:account-a"))
+    }
+}
+
+final class GmailIncrementalProviderTests: XCTestCase {
+    override func tearDown() {
+        URLProtocolStub.handler = nil
+        super.tearDown()
+    }
+
+    func testFortyOneUnseenMessagesReturnsBoundedBatchWithMoreWork() async throws {
+        let ids = (1...41).map { "message-\($0)" }
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/messages") == true {
+                return try stubResponse(request, json: [
+                    "messages": ids.map { ["id": $0, "threadId": "thread-\($0)"] }
+                ])
+            }
+            return try gmailMessageResponse(request)
+        }
+
+        let batch = try await gmailTestClient().recentMessageBatch(
+            account: testEmailAccount(),
+            maxResults: 40,
+            token: "token",
+            receivedAfter: nil,
+            excludingMessageIDs: []
+        )
+
+        XCTAssertEqual(batch.messages.count, 40)
+        XCTAssertTrue(batch.hasMore)
+    }
+
+    func testKnownFirstPageDoesNotHideUnseenMessageOnNextPage() async throws {
+        let known = (1...100).map { "known-\($0)" }
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/messages") == true {
+                let pageToken = URLComponents(
+                    url: try XCTUnwrap(request.url),
+                    resolvingAgainstBaseURL: false
+                )?.queryItems?.first { $0.name == "pageToken" }?.value
+                if pageToken == "page-2" {
+                    return try stubResponse(request, json: [
+                        "messages": [["id": "unseen", "threadId": "thread-unseen"]]
+                    ])
+                }
+                return try stubResponse(request, json: [
+                    "messages": known.map { ["id": $0, "threadId": "thread-\($0)"] },
+                    "nextPageToken": "page-2"
+                ])
+            }
+            return try gmailMessageResponse(request)
+        }
+        let account = testEmailAccount()
+        let excluded = Set(known.map { "\(account.id):\($0)" })
+
+        let batch = try await gmailTestClient().recentMessageBatch(
+            account: account,
+            maxResults: 40,
+            token: "token",
+            receivedAfter: nil,
+            excludingMessageIDs: excluded
+        )
+
+        XCTAssertEqual(batch.messages.map(\.id), ["\(account.id):unseen"])
+        XCTAssertFalse(batch.hasMore)
+    }
+
+    func testOneFailedGmailBodyDownloadFailsEntireBatch() async {
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/messages") == true {
+                return try stubResponse(request, json: [
+                    "messages": [
+                        ["id": "good", "threadId": "thread-good"],
+                        ["id": "failed", "threadId": "thread-failed"]
+                    ]
+                ])
+            }
+            if request.url?.lastPathComponent == "failed" {
+                return try stubResponse(
+                    request,
+                    status: 500,
+                    json: ["error": ["message": "Fixture failure"]]
+                )
+            }
+            return try gmailMessageResponse(request)
+        }
+
+        do {
+            _ = try await gmailTestClient().recentMessageBatch(
+                account: testEmailAccount(),
+                maxResults: 40,
+                token: "token",
+                receivedAfter: nil,
+                excludingMessageIDs: []
+            )
+            XCTFail("A partial body download must not advance the scan")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Fixture failure"))
+        }
+    }
+
+    func testGmailCursorIsEncodedInProviderQuery() async throws {
+        let cursor = Date(timeIntervalSince1970: 1_786_435_200)
+        URLProtocolStub.handler = { request in
+            let query = URLComponents(
+                url: try XCTUnwrap(request.url),
+                resolvingAgainstBaseURL: false
+            )?.queryItems?.first { $0.name == "q" }?.value
+            XCTAssertTrue(query?.contains("after:1786435200") == true)
+            return try stubResponse(request, json: ["messages": []])
+        }
+
+        let batch = try await gmailTestClient().recentMessageBatch(
+            account: testEmailAccount(),
+            maxResults: 40,
+            token: "token",
+            receivedAfter: cursor,
+            excludingMessageIDs: []
+        )
+
+        XCTAssertTrue(batch.messages.isEmpty)
+        XCTAssertFalse(batch.hasMore)
+    }
+}
+
+final class OutlookIncrementalProviderTests: XCTestCase {
+    override func tearDown() {
+        URLProtocolStub.handler = nil
+        super.tearDown()
+    }
+
+    func testKnownGraphPageDoesNotHideNextPageAndRequestsImmutableIDs() async throws {
+        let known = (1...100).map { "known-\($0)" }
+        URLProtocolStub.handler = { request in
+            XCTAssertTrue(
+                request.value(forHTTPHeaderField: "Prefer")?.contains("IdType=\"ImmutableId\"") == true
+            )
+            if request.url?.path == "/page-2" {
+                return try stubResponse(request, json: [
+                    "value": [outlookMessageJSON(id: "unseen")]
+                ])
+            }
+            let filter = URLComponents(
+                url: try XCTUnwrap(request.url),
+                resolvingAgainstBaseURL: false
+            )?.queryItems?.first { $0.name == "$filter" }?.value
+            XCTAssertTrue(filter?.contains("receivedDateTime ge") == true)
+            return try stubResponse(request, json: [
+                "value": known.map { outlookMessageJSON(id: $0) },
+                "@odata.nextLink": "https://graph.test/page-2"
+            ])
+        }
+        let account = EmailAccount(
+            provider: .outlook,
+            providerAccountID: "account-a",
+            email: "person@example.com",
+            displayName: "Person"
+        )
+        let excluded = Set(known.map { "\(account.id):\($0)" })
+
+        let batch = try await outlookTestClient().recentMessageBatch(
+            account: account,
+            maxResults: 40,
+            token: "token",
+            receivedAfter: Date(timeIntervalSince1970: 1_786_000_000),
+            excludingMessageIDs: excluded
+        )
+
+        XCTAssertEqual(batch.messages.map(\.id), ["\(account.id):unseen"])
+        XCTAssertFalse(batch.hasMore)
+    }
+
+    func testRepeatedGraphNextLinkFailsInsteadOfLoopingForever() async {
+        URLProtocolStub.handler = { request in
+            try stubResponse(request, json: [
+                "value": [],
+                "@odata.nextLink": request.url?.absoluteString ?? "https://graph.test/messages"
+            ])
+        }
+
+        do {
+            _ = try await outlookTestClient().recentMessageBatch(
+                account: EmailAccount(
+                    provider: .outlook,
+                    providerAccountID: "account-a",
+                    email: "person@example.com",
+                    displayName: "Person"
+                ),
+                maxResults: 40,
+                token: "token",
+                receivedAfter: nil,
+                excludingMessageIDs: []
+            )
+            XCTFail("A repeated Graph page must fail safely")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("repeated page"))
+        }
+    }
+}
+
+final class AIModelPreferenceTests: XCTestCase {
+    func testTextAndRealtimeSelectionsPersistIndependently() throws {
+        let suiteName = "AIModelPreferenceTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("gpt-5.6-sol", forKey: AppConfig.openAIModelPreferenceKey)
+        defaults.set("gpt-realtime-2.1-mini", forKey: AppConfig.openAIRealtimeModelPreferenceKey)
+
+        XCTAssertEqual(AppConfig.selectedOpenAIModel(defaults: defaults), "gpt-5.6-sol")
+        XCTAssertEqual(
+            AppConfig.selectedOpenAIRealtimeModel(defaults: defaults),
+            "gpt-realtime-2.1-mini"
+        )
+    }
+
+    func testUnknownConfiguredModelRemainsAvailable() {
+        let choices = AppConfig.textModelChoices(including: "organization-custom-model")
+
+        XCTAssertEqual(choices.first?.id, "organization-custom-model")
+        XCTAssertTrue(choices.contains { $0.id == "gpt-5.6-terra" })
+    }
+
+    func testMissingOrWhitespacePreferencesUseBundledFallbacks() throws {
+        let suiteName = "AIModelFallbackTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertEqual(AppConfig.selectedOpenAIModel(defaults: defaults), AppConfig.bundledOpenAIModel)
+        XCTAssertEqual(
+            AppConfig.selectedOpenAIRealtimeModel(defaults: defaults),
+            AppConfig.bundledOpenAIRealtimeModel
+        )
+        defaults.set("   ", forKey: AppConfig.openAIModelPreferenceKey)
+        defaults.set("\n", forKey: AppConfig.openAIRealtimeModelPreferenceKey)
+        XCTAssertEqual(AppConfig.selectedOpenAIModel(defaults: defaults), AppConfig.bundledOpenAIModel)
+        XCTAssertEqual(
+            AppConfig.selectedOpenAIRealtimeModel(defaults: defaults),
+            AppConfig.bundledOpenAIRealtimeModel
+        )
+    }
+
+    func testResponsesPayloadUsesSelectedModelAndPreservesStrictSchema() throws {
+        let schema = OpenAIClient.JSONSchema(
+            name: "fixture",
+            value: [
+                "type": "object",
+                "additionalProperties": false,
+                "properties": ["value": ["type": "string"]],
+                "required": ["value"]
+            ]
+        )
+        let payload = OpenAIClient(apiKey: "test", model: "gpt-5.6-terra")
+            .requestPayload(
+                system: "System",
+                user: "User",
+                schema: schema,
+                maxOutputTokens: 321,
+                reasoningEffort: .low
+            )
+
+        XCTAssertEqual(payload["model"] as? String, "gpt-5.6-terra")
+        XCTAssertEqual(payload["store"] as? Bool, false)
+        XCTAssertEqual(payload["max_output_tokens"] as? Int, 321)
+        let text = try XCTUnwrap(payload["text"] as? [String: Any])
+        let format = try XCTUnwrap(text["format"] as? [String: Any])
+        XCTAssertEqual(format["type"] as? String, "json_schema")
+        XCTAssertEqual(format["name"] as? String, "fixture")
+        XCTAssertEqual(format["strict"] as? Bool, true)
+        let reasoning = try XCTUnwrap(payload["reasoning"] as? [String: Any])
+        XCTAssertEqual(reasoning["effort"] as? String, "low")
+
+        let compatibilityPayload = OpenAIClient(apiKey: "test", model: "gpt-4o-mini")
+            .requestPayload(
+                system: "System",
+                user: "User",
+                reasoningEffort: .low
+            )
+        XCTAssertNil(compatibilityPayload["reasoning"])
+    }
+}
+
 final class WatchTaskSyncProtocolTests: XCTestCase {
     func testSnapshotRoundTripsWithTaskDetails() throws {
         let task = WatchTaskSnapshotItem(
@@ -758,4 +1391,159 @@ private func decimal(_ value: String) -> Decimal {
 
 private func jsonString(_ value: String) -> Data {
     Data("\"\(value)\"".utf8)
+}
+
+private func temporaryTestDirectory(_ prefix: String) -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("orbit-\(prefix)-\(UUID().uuidString)", isDirectory: true)
+}
+
+private func emailMessage(
+    id: String,
+    receivedAt: Date = .now
+) -> EmailMessage {
+    EmailMessage(
+        id: id,
+        provider: .gmail,
+        accountID: "gmail:account-a",
+        accountEmail: "person@example.com",
+        threadID: "gmail:account-a:thread-1",
+        senderName: "Recruiter",
+        senderEmail: "recruiter@example.com",
+        subject: "Interview update",
+        preview: "Choose a time.",
+        body: "Choose an interview time.",
+        receivedDate: receivedAt,
+        isRead: false,
+        providerImportance: "high"
+    )
+}
+
+private func jobUpdate(sourceMessageID: String) -> DetectedJobUpdate {
+    DetectedJobUpdate(
+        company: "Example Co",
+        role: "iOS Engineer",
+        status: .interview,
+        nextAction: "Choose an interview time",
+        reason: "The recruiter requested availability.",
+        sourceMessageID: sourceMessageID,
+        sourceProvider: .gmail,
+        sourceMailbox: "person@example.com",
+        sourceSender: "recruiter@example.com",
+        sourceSubject: "Interview update",
+        sourceDate: .now
+    )
+}
+
+private func inboxMessage(id: String, receivedAt: Date) -> InboxMessage {
+    InboxMessage(
+        id: id,
+        provider: .gmail,
+        accountID: "gmail:account-a",
+        accountEmail: "person@example.com",
+        senderName: "Recruiter",
+        senderEmail: "recruiter@example.com",
+        subject: "Interview update",
+        aiSummary: "Choose an interview time.",
+        receivedAt: receivedAt,
+        importance: .high,
+        actionRequired: true,
+        section: .needsAction
+    )
+}
+
+private final class URLProtocolStub: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private func gmailTestClient() -> GmailAPIClient {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [URLProtocolStub.self]
+    return GmailAPIClient(
+        session: URLSession(configuration: configuration),
+        baseURL: URL(string: "https://gmail.test/users/me")!
+    )
+}
+
+private func testEmailAccount() -> EmailAccount {
+    EmailAccount(
+        provider: .gmail,
+        providerAccountID: "account-a",
+        email: "person@example.com",
+        displayName: "Person"
+    )
+}
+
+private func stubResponse(
+    _ request: URLRequest,
+    status: Int = 200,
+    json: Any
+) throws -> (HTTPURLResponse, Data) {
+    let url = try XCTUnwrap(request.url)
+    let response = try XCTUnwrap(HTTPURLResponse(
+        url: url,
+        statusCode: status,
+        httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": "application/json"]
+    ))
+    return (response, try JSONSerialization.data(withJSONObject: json))
+}
+
+private func gmailMessageResponse(
+    _ request: URLRequest
+) throws -> (HTTPURLResponse, Data) {
+    let id = try XCTUnwrap(request.url?.lastPathComponent)
+    return try stubResponse(request, json: [
+        "id": id,
+        "threadId": "thread-\(id)",
+        "internalDate": "1786435200000",
+        "payload": ["headers": []]
+    ])
+}
+
+private func outlookTestClient() -> OutlookMailService {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [URLProtocolStub.self]
+    return OutlookMailService(
+        session: URLSession(configuration: configuration),
+        baseURL: URL(string: "https://graph.test/messages")!
+    )
+}
+
+private func outlookMessageJSON(id: String) -> [String: Any] {
+    [
+        "id": id,
+        "conversationId": "thread-\(id)",
+        "from": [
+            "emailAddress": [
+                "name": "Recruiter",
+                "address": "recruiter@example.com"
+            ]
+        ],
+        "subject": "Interview update",
+        "bodyPreview": "Choose a time.",
+        "receivedDateTime": "2026-08-13T12:00:00Z",
+        "isRead": false,
+        "importance": "high"
+    ]
 }

@@ -1,3 +1,4 @@
+import AppIntents
 import Foundation
 
 enum TaskPriority: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -269,5 +270,66 @@ enum OrbitIntegrationPreferences {
     static var appleCalendarSyncEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: appleCalendarSyncKey) }
         set { UserDefaults.standard.set(newValue, forKey: appleCalendarSyncKey) }
+    }
+}
+
+/// Destinations that can be opened by system surfaces such as Control Center.
+/// Keeping this in the shared app/widget target lets the control persist its
+/// request before iOS brings the main app to the foreground.
+enum OrbitLaunchTarget: String, AppEnum {
+    case voice
+
+    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Orbit Destination")
+    static var caseDisplayRepresentations: [Self: DisplayRepresentation] = [
+        .voice: "Live Voice"
+    ]
+}
+
+enum OrbitPendingLaunchStore {
+    private static let pendingLaunchKey = "orbit.pendingLaunch.v1"
+
+    static func request(
+        _ target: OrbitLaunchTarget,
+        defaults: UserDefaults = appGroupDefaults
+    ) {
+        defaults.set(target.rawValue, forKey: pendingLaunchKey)
+    }
+
+    /// Reads and clears in one operation from the caller's perspective so a
+    /// foreground notification cannot present the same destination twice.
+    static func consume(
+        defaults: UserDefaults = appGroupDefaults
+    ) -> OrbitLaunchTarget? {
+        guard let rawValue = defaults.string(forKey: pendingLaunchKey),
+              let target = OrbitLaunchTarget(rawValue: rawValue) else { return nil }
+        defaults.removeObject(forKey: pendingLaunchKey)
+        return target
+    }
+
+    private static var appGroupDefaults: UserDefaults {
+        UserDefaults(suiteName: SharedTaskStore.appGroupID) ?? .standard
+    }
+}
+
+/// Opens Orbit and leaves a durable launch request for the app to consume.
+/// A custom OpenIntent is required because OpenURLIntent supports universal
+/// links, not Orbit's custom URL scheme.
+struct OpenOrbitVoiceIntent: OpenIntent {
+    static var title: LocalizedStringResource = "Open Orbit Voice"
+    static var description = IntentDescription("Opens Orbit directly in live voice mode.")
+
+    @Parameter(title: "Destination") var target: OrbitLaunchTarget
+
+    init() {
+        target = .voice
+    }
+
+    init(target: OrbitLaunchTarget) {
+        self.target = target
+    }
+
+    func perform() async throws -> some IntentResult {
+        OrbitPendingLaunchStore.request(target)
+        return .result()
     }
 }
