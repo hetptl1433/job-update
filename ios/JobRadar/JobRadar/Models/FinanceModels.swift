@@ -6,6 +6,7 @@ import Foundation
 enum FinanceRoute: String, Hashable, Codable {
     case income
     case recurring
+    case transactions
 }
 
 /// Backend-normalized financial account categories. Plaid access tokens never
@@ -282,6 +283,9 @@ struct FinanceRecurringPayment: Identifiable, Codable, Hashable {
     var lastChargeDate: String
     var nextExpectedDate: String?
     var occurrences: Int
+    /// Optional so cached snapshots and older deployed backends continue to decode.
+    var chargesLast12Months: Int?
+    var spentLast12Months: Double?
     var isVariable: Bool
     var confidence: Double
 }

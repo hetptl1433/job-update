@@ -52,7 +52,8 @@ struct LiveAssistantService: AssistantService {
                 prompt: prompt,
                 history: history,
                 context: context
-            )
+            ),
+            reasoningEffort: .medium
         )
     }
 }

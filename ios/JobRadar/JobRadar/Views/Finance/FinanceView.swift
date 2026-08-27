@@ -89,6 +89,8 @@ struct FinanceView: View {
                     IncomeView()
                 case .recurring:
                     RecurringPaymentsView()
+                case .transactions:
+                    FinanceTransactionsView()
                 }
             }
         }
@@ -460,7 +462,13 @@ struct FinanceView: View {
 
     private func transactionsSection(_ overview: FinanceOverview) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: "Recent activity")
+            SectionHeader(
+                title: "Recent activity",
+                actionTitle: overview.recentTransactions.isEmpty ? nil : "See all",
+                action: overview.recentTransactions.isEmpty ? nil : {
+                    app.financePath.append(.transactions)
+                }
+            )
             if overview.recentTransactions.isEmpty {
                 Text("No transactions are available yet. Plaid may still be preparing the first sync.")
                     .font(.subheadline)
@@ -762,6 +770,462 @@ private struct FinanceAccountsBox: View {
     }
 }
 
+private struct FinanceTransactionsView: View {
+    @EnvironmentObject private var finance: FinanceRepository
+
+    @State private var range: FinanceTransactionRange = .oneYear
+    @State private var filter: FinanceTransactionFilter = .all
+    @State private var selectedCurrencyCode = ""
+    @State private var searchText = ""
+
+    private var transactions: [FinanceTransaction] {
+        finance.overview?.recentTransactions ?? []
+    }
+
+    private var currencyCodes: [String] {
+        Array(Set(transactions.map { $0.currencyCode.uppercased() })).sorted()
+    }
+
+    private var currencyCode: String {
+        if currencyCodes.contains(selectedCurrencyCode) { return selectedCurrencyCode }
+        return currencyCodes.first ?? finance.overview?.currencyCode ?? "USD"
+    }
+
+    private var confirmedIncomeIDs: Set<String> {
+        Set(finance.incomeOverview?.summaries
+            .flatMap { $0.confirmedTransactions }
+            .map(\.id) ?? [])
+    }
+
+    private var reviewIncomeIDs: Set<String> {
+        Set(finance.incomeOverview?.summaries
+            .flatMap { $0.needsReviewTransactions }
+            .map(\.id) ?? [])
+    }
+
+    private var rangedTransactions: [FinanceTransaction] {
+        let startDate = range.startDateString
+        return transactions.filter { transaction in
+            transaction.currencyCode.caseInsensitiveCompare(currencyCode) == .orderedSame
+                && transaction.date >= startDate
+                && matchesSearch(transaction)
+        }
+    }
+
+    private var filteredTransactions: [FinanceTransaction] {
+        rangedTransactions.filter { transaction in
+            switch filter {
+            case .all:
+                true
+            case .spending:
+                transaction.direction == .outflow
+            case .income:
+                finance.incomeOverview != nil
+                    && transaction.direction == .inflow
+                    && confirmedIncomeIDs.contains(transaction.id)
+            case .otherDeposits:
+                finance.incomeOverview != nil
+                    && transaction.direction == .inflow
+                    && !confirmedIncomeIDs.contains(transaction.id)
+            }
+        }
+    }
+
+    private var transactionMonths: [FinanceTransactionMonth] {
+        let grouped = Dictionary(grouping: filteredTransactions) { String($0.date.prefix(7)) }
+        return grouped.keys.sorted(by: >).map { month in
+            FinanceTransactionMonth(id: month, transactions: grouped[month] ?? [])
+        }
+    }
+
+    private var postedSpent: Double {
+        rangedTransactions
+            .filter { !$0.pending && $0.direction == .outflow }
+            .reduce(0) { $0 + $1.amount }
+    }
+
+    private var postedIncome: Double? {
+        guard finance.incomeOverview != nil else { return nil }
+        return rangedTransactions
+            .filter { !$0.pending && $0.direction == .inflow && confirmedIncomeIDs.contains($0.id) }
+            .reduce(0) { $0 + $1.amount }
+    }
+
+    private var otherDeposits: Double? {
+        guard finance.incomeOverview != nil else { return nil }
+        return rangedTransactions
+            .filter { !$0.pending && $0.direction == .inflow && !confirmedIncomeIDs.contains($0.id) }
+            .reduce(0) { $0 + $1.amount }
+    }
+
+    private var topMerchants: [FinanceMerchantSpend] {
+        var groups: [String: FinanceMerchantSpend] = [:]
+        for transaction in rangedTransactions where !transaction.pending && transaction.direction == .outflow {
+            let key = FinanceMerchantSpend.normalizedKey(transaction.displayName)
+            guard !key.isEmpty else { continue }
+            var merchant = groups[key] ?? FinanceMerchantSpend(
+                id: key,
+                name: transaction.displayName,
+                amount: 0,
+                count: 0,
+                lastDate: transaction.date
+            )
+            merchant.amount += transaction.amount
+            merchant.count += 1
+            if transaction.date > merchant.lastDate {
+                merchant.lastDate = transaction.date
+                merchant.name = transaction.displayName
+            }
+            groups[key] = merchant
+        }
+        return groups.values.sorted {
+            $0.amount > $1.amount || ($0.amount == $1.amount && $0.name < $1.name)
+        }
+        .prefix(8)
+        .map { $0 }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                if transactions.isEmpty {
+                    Text("No transactions are available yet. Plaid may still be preparing the first sync.")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .cardSurface()
+                } else {
+                    controls
+                    summary
+                    merchantSection
+
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                        SectionHeader(title: filter.sectionTitle)
+                        Text("\(filteredTransactions.count) transaction\(filteredTransactions.count == 1 ? "" : "s") in \(range.label.lowercased())")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+
+                        if filteredTransactions.isEmpty {
+                            Text("No transactions match these filters.")
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .cardSurface()
+                        } else {
+                            LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                                ForEach(transactionMonths) { month in
+                                    Text(FinanceTransactionDate.monthLabel(month.id))
+                                        .sectionLabel()
+                                        .padding(.horizontal, AppTheme.Spacing.xs)
+                                    VStack(spacing: 0) {
+                                        ForEach(Array(month.transactions.enumerated()), id: \.element.id) { index, transaction in
+                                            FinanceTransactionRow(
+                                                transaction: transaction,
+                                                badge: badge(for: transaction)
+                                            )
+                                            if index < month.transactions.count - 1 {
+                                                Divider().overlay(AppTheme.separator)
+                                            }
+                                        }
+                                    }
+                                    .cardSurface(padding: 0)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(AppTheme.Spacing.lg)
+        }
+        .background(AppTheme.background)
+        .navigationTitle("Transactions")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "Merchant, app, or category")
+        .refreshable {
+            await finance.load(showLoading: false, forceRefresh: true)
+        }
+        .task {
+            if finance.incomeOverview == nil, finance.isConnected {
+                await finance.loadIncome(showLoading: false)
+            }
+        }
+        .onAppear {
+            if !currencyCodes.contains(selectedCurrencyCode) {
+                selectedCurrencyCode = currencyCodes.first ?? ""
+            }
+        }
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("TRANSACTION HISTORY").sectionLabel()
+                    Text("Actual income is kept separate from transfers and other deposits.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Spacer(minLength: AppTheme.Spacing.sm)
+                if currencyCodes.count > 1 {
+                    Menu {
+                        ForEach(currencyCodes, id: \.self) { code in
+                            Button(code) { selectedCurrencyCode = code }
+                        }
+                    } label: {
+                        Text(currencyCode).font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
+
+            Picker("History range", selection: $range) {
+                ForEach(FinanceTransactionRange.allCases) { option in
+                    Text(option.shortLabel).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Picker("Transaction type", selection: $filter) {
+                ForEach(FinanceTransactionFilter.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .cardSurface()
+    }
+
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            Text("\(range.label.uppercased()) TOTALS").sectionLabel()
+            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+                FinanceTransactionMetric(
+                    title: "Actual income",
+                    amount: postedIncome,
+                    currencyCode: currencyCode,
+                    tint: AppTheme.success
+                )
+                FinanceTransactionMetric(
+                    title: "Spent",
+                    amount: postedSpent,
+                    currencyCode: currencyCode,
+                    tint: AppTheme.primaryText
+                )
+                FinanceTransactionMetric(
+                    title: "Other deposits",
+                    amount: otherDeposits,
+                    currencyCode: currencyCode,
+                    tint: AppTheme.warning
+                )
+            }
+            if let postedIncome {
+                Divider().overlay(AppTheme.separator)
+                HStack {
+                    Label(
+                        "Earned minus spent",
+                        systemImage: postedIncome >= postedSpent ? "arrow.up.right" : "arrow.down.right"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    Spacer()
+                    Text(money(postedIncome - postedSpent))
+                        .font(.headline)
+                        .foregroundStyle(postedIncome >= postedSpent ? AppTheme.success : AppTheme.coral)
+                        .monospacedDigit()
+                }
+            } else {
+                Label("Income classification is still loading.", systemImage: "hourglass")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+        }
+        .cardSurface()
+    }
+
+    @ViewBuilder
+    private var merchantSection: some View {
+        if !topMerchants.isEmpty {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                SectionHeader(title: "Top apps & merchants")
+                Text("Combined posted spending for each merchant in \(range.label.lowercased()).")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                VStack(spacing: 0) {
+                    ForEach(Array(topMerchants.enumerated()), id: \.element.id) { index, merchant in
+                        HStack(spacing: AppTheme.Spacing.md) {
+                            Image(systemName: "storefront")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 32, height: 32)
+                                .background(AppTheme.secondarySurface, in: Circle())
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(merchant.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Text("\(merchant.count) charge\(merchant.count == 1 ? "" : "s") · latest \(FinanceTransactionDate.shortDate(merchant.lastDate))")
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.secondaryText)
+                            }
+                            Spacer(minLength: AppTheme.Spacing.sm)
+                            Text(money(merchant.amount))
+                                .font(.subheadline.weight(.semibold))
+                                .monospacedDigit()
+                        }
+                        .padding(AppTheme.Spacing.lg)
+                        if index < topMerchants.count - 1 {
+                            Divider().overlay(AppTheme.separator)
+                        }
+                    }
+                }
+                .cardSurface(padding: 0)
+            }
+        }
+    }
+
+    private func matchesSearch(_ transaction: FinanceTransaction) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        return [transaction.displayName, transaction.name, transaction.category]
+            .compactMap { $0 }
+            .contains { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    private func badge(for transaction: FinanceTransaction) -> FinanceTransactionBadge? {
+        guard transaction.direction == .inflow, finance.incomeOverview != nil else { return nil }
+        if confirmedIncomeIDs.contains(transaction.id) {
+            return FinanceTransactionBadge(text: "Income", tint: AppTheme.success)
+        }
+        if reviewIncomeIDs.contains(transaction.id) {
+            return FinanceTransactionBadge(text: "Review", tint: AppTheme.warning)
+        }
+        return FinanceTransactionBadge(text: "Deposit", tint: AppTheme.secondaryText)
+    }
+
+    private func money(_ amount: Double) -> String {
+        amount.formatted(.currency(code: currencyCode).precision(.fractionLength(0...2)))
+    }
+}
+
+private enum FinanceTransactionRange: String, CaseIterable, Identifiable {
+    case oneMonth
+    case threeMonths
+    case sixMonths
+    case oneYear
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .oneMonth: "Last month"
+        case .threeMonths: "Last 3 months"
+        case .sixMonths: "Last 6 months"
+        case .oneYear: "Last 12 months"
+        }
+    }
+    var shortLabel: String {
+        switch self {
+        case .oneMonth: "1M"
+        case .threeMonths: "3M"
+        case .sixMonths: "6M"
+        case .oneYear: "1Y"
+        }
+    }
+    var startDateString: String {
+        let value: Date
+        switch self {
+        case .oneMonth:
+            value = Calendar.current.date(byAdding: .month, value: -1, to: .now) ?? .now
+        case .threeMonths:
+            value = Calendar.current.date(byAdding: .month, value: -3, to: .now) ?? .now
+        case .sixMonths:
+            value = Calendar.current.date(byAdding: .month, value: -6, to: .now) ?? .now
+        case .oneYear:
+            value = Calendar.current.date(byAdding: .year, value: -1, to: .now) ?? .now
+        }
+        return FinanceTransactionDate.dateOnly(value)
+    }
+}
+
+private enum FinanceTransactionFilter: String, CaseIterable, Identifiable {
+    case all
+    case spending
+    case income
+    case otherDeposits
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .all: "All"
+        case .spending: "Spent"
+        case .income: "Income"
+        case .otherDeposits: "Deposits"
+        }
+    }
+    var sectionTitle: String {
+        switch self {
+        case .all: "All activity"
+        case .spending: "Spending"
+        case .income: "Actual income"
+        case .otherDeposits: "Other deposits"
+        }
+    }
+}
+
+private struct FinanceTransactionMonth: Identifiable {
+    var id: String
+    var transactions: [FinanceTransaction]
+}
+
+private struct FinanceMerchantSpend: Identifiable {
+    var id: String
+    var name: String
+    var amount: Double
+    var count: Int
+    var lastDate: String
+
+    static func normalizedKey(_ value: String) -> String {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
+            .replacingOccurrences(
+                of: "^(sq \\*|tst\\*|paypal \\*|google \\*|apple\\.com/bill\\s*)",
+                with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "\\b[0-9]{4,}\\b", with: " ", options: .regularExpression)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
+private struct FinanceTransactionMetric: View {
+    var title: String
+    var amount: Double?
+    var currencyCode: String
+    var tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+                .lineLimit(2)
+            Text(amount.map {
+                $0.formatted(.currency(code: currencyCode).precision(.fractionLength(0...2)))
+            } ?? "—")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(tint)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct FinanceTransactionBadge {
+    var text: String
+    var tint: Color
+}
+
 private struct FinanceInstitutionDetailView: View {
     @EnvironmentObject private var finance: FinanceRepository
 
@@ -1011,6 +1475,7 @@ private struct FinanceInstitutionMark: View {
 
 private struct FinanceTransactionRow: View {
     var transaction: FinanceTransaction
+    var badge: FinanceTransactionBadge? = nil
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.md) {
@@ -1023,6 +1488,7 @@ private struct FinanceTransactionRow: View {
                 HStack(spacing: 5) {
                     Text(transaction.displayName).font(.subheadline.weight(.semibold)).lineLimit(1)
                     if transaction.pending { Tag(text: "Pending", tint: AppTheme.warning) }
+                    if let badge { Tag(text: badge.text, tint: badge.tint) }
                 }
                 Text([transaction.category, transaction.date].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(AppTheme.secondaryText).lineLimit(1)
@@ -1041,7 +1507,7 @@ private struct FinanceRecurringPaymentRow: View {
     var payment: FinanceRecurringPayment
 
     var body: some View {
-        HStack(spacing: AppTheme.Spacing.md) {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
             Image(systemName: systemImage)
                 .font(.subheadline)
                 .foregroundStyle(AppTheme.primaryText)
@@ -1062,6 +1528,12 @@ private struct FinanceRecurringPaymentRow: View {
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
                 .lineLimit(1)
+                if let spent = payment.spentLast12Months {
+                    Text("\(payment.chargesLast12Months ?? payment.occurrences) charges · \(money(spent)) in 12 months")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: AppTheme.Spacing.sm)
             VStack(alignment: .trailing, spacing: 2) {
@@ -1169,6 +1641,7 @@ private struct RecurringPaymentsView: View {
     ) -> some View {
         let monthly = overview.detectedMonthlyRecurringTotal
         let spendingShare = overview.monthlyOutflow > 0 ? monthly / overview.monthlyOutflow : 0
+        let actualLast12Months = payments.compactMap(\.spentLast12Months).reduce(0, +)
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             Text("RECURRING ESTIMATE").sectionLabel()
             HStack(alignment: .firstTextBaseline) {
@@ -1192,6 +1665,24 @@ private struct RecurringPaymentsView: View {
                         spendingShare.formatted(.percent.precision(.fractionLength(0))),
                         label: "Of spending"
                     )
+                }
+            }
+            if actualLast12Months > 0 {
+                Divider().overlay(AppTheme.separator)
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Actually paid in the last 12 months")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                        Text("Across all detected recurring apps and merchants")
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.tertiaryText)
+                    }
+                    Spacer()
+                    Text(money(actualLast12Months, code: overview.currencyCode))
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.primaryText)
+                        .monospacedDigit()
                 }
             }
         }
@@ -1256,6 +1747,40 @@ private enum FinanceDateLabel {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: value)
+    }
+}
+
+private enum FinanceTransactionDate {
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM"
+        return formatter
+    }()
+
+    static func dateOnly(_ date: Date) -> String {
+        dateFormatter.string(from: date)
+    }
+
+    static func monthLabel(_ value: String) -> String {
+        guard let date = monthFormatter.date(from: value) else { return value }
+        return date.formatted(.dateTime.month(.wide).year())
+    }
+
+    static func shortDate(_ value: String) -> String {
+        guard let date = dateFormatter.date(from: value) else { return value }
+        return date.formatted(.dateTime.month(.abbreviated).day())
     }
 }
 

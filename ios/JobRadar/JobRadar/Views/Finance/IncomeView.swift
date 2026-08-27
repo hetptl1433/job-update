@@ -3,12 +3,13 @@ import SwiftUI
 
 /// Dedicated earned-income experience. All totals arrive from Orbit's
 /// deterministic backend classifier; this view never equates a generic inflow
-/// with income and never asks a language model to perform arithmetic.
+/// with income. AI can optionally suggest a review decision, but never writes
+/// it or performs the authoritative arithmetic.
 struct IncomeView: View {
     @EnvironmentObject private var finance: FinanceRepository
 
     @State private var selectedCurrencyCode = ""
-    @State private var historyRange = IncomeHistoryRange.sixMonths
+    @State private var historyRange = IncomeHistoryRange.oneYear
     @State private var transactionToReview: IncomeTransaction?
     @State private var goal = StoredIncomeGoal.zero
     @State private var showingGoalEditor = false
@@ -180,10 +181,15 @@ struct IncomeView: View {
             Divider().overlay(AppTheme.separator)
 
             LazyVGrid(
-                columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
+                columns: [GridItem(.flexible()), GridItem(.flexible())],
                 alignment: .leading,
                 spacing: AppTheme.Spacing.md
             ) {
+                IncomeCompactMetric(
+                    title: "Last 12 months",
+                    value: incomeMoney(summary.confirmedLast12Months, code: summary.currencyCode),
+                    detail: "Confirmed deposits"
+                )
                 IncomeCompactMetric(
                     title: "Year to date",
                     value: incomeMoney(summary.yearToDate, code: summary.currencyCode)
@@ -533,7 +539,7 @@ struct IncomeView: View {
         case .yearToDate:
             let year = String(Calendar.current.component(.year, from: .now))
             return history.filter { $0.month.hasPrefix(year) }
-        case .all:
+        case .oneYear:
             return history
         }
     }
@@ -547,14 +553,14 @@ struct IncomeView: View {
 private enum IncomeHistoryRange: String, CaseIterable, Identifiable {
     case sixMonths
     case yearToDate
-    case all
+    case oneYear
 
     var id: String { rawValue }
     var label: String {
         switch self {
         case .sixMonths: "6 months"
         case .yearToDate: "YTD"
-        case .all: "All"
+        case .oneYear: "12 months"
         }
     }
 }
@@ -719,13 +725,20 @@ private struct IncomeSourceRow: View {
 private struct IncomeClassificationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var finance: FinanceRepository
+    @AppStorage("orbit.ai.financeContextEnabled") private var shareWithAssistant = false
 
     let transaction: IncomeTransaction
 
     @State private var sourceName: String
     @State private var sourceType: IncomeType
     @State private var saving = false
+    @State private var isAnalyzing = false
+    @State private var aiSuggestion: IncomeAISuggestion?
     @State private var errorMessage: String?
+
+    private var hasOpenAIKey: Bool {
+        !(KeychainStore.get(KeychainKeys.openAIKey) ?? "").isEmpty
+    }
 
     init(transaction: IncomeTransaction) {
         self.transaction = transaction
@@ -745,8 +758,52 @@ private struct IncomeClassificationSheet: View {
 
                 if let reason = transaction.classificationReason, !reason.isEmpty {
                     Section("Why this needs review") {
-                        Text(reason).foregroundStyle(AppTheme.secondaryText)
+                        Text(classificationReasonLabel(reason)).foregroundStyle(AppTheme.secondaryText)
                     }
+                }
+
+                Section {
+                    Toggle("Allow AI transaction review", isOn: $shareWithAssistant)
+
+                    if shareWithAssistant {
+                        if hasOpenAIKey {
+                            Button {
+                                analyzeWithAI()
+                            } label: {
+                                HStack {
+                                    Label("Get AI suggestion", systemImage: "sparkles")
+                                    Spacer()
+                                    if isAnalyzing { ProgressView() }
+                                }
+                            }
+                            .disabled(saving || isAnalyzing)
+                        } else {
+                            Label("Connect OpenAI processing in Settings first.", systemImage: "key")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+
+                    if let suggestion = aiSuggestion {
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                            HStack {
+                                Text("Suggestion")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Tag(text: suggestionLabel(suggestion), tint: suggestionTint(suggestion))
+                            }
+                            Text(suggestion.reason)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                            Text("\(suggestion.confidence.formatted(.percent.precision(.fractionLength(0)))) confidence · Review before saving")
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.tertiaryText)
+                        }
+                    }
+                } header: {
+                    Text("Optional AI suggestion")
+                } footer: {
+                    Text("When enabled, Orbit sends this deposit and up to 40 compact recent inflow summaries to your configured OpenAI model. The suggestion never changes totals until you approve a decision.")
                 }
 
                 Section("If this is income") {
@@ -773,12 +830,12 @@ private struct IncomeClassificationSheet: View {
                             Spacer()
                         }
                     }
-                    .disabled(saving || sourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(saving || isAnalyzing || sourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     Button("This is not income") {
                         save(classification: .notIncome)
                     }
-                    .disabled(saving)
+                    .disabled(saving || isAnalyzing)
                 } footer: {
                     Text("Not-income decisions keep transfers, refunds and other deposits out of earnings totals.")
                 }
@@ -787,10 +844,10 @@ private struct IncomeClassificationSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.disabled(saving)
+                    Button("Cancel") { dismiss() }.disabled(saving || isAnalyzing)
                 }
             }
-            .alert("Couldn't save classification", isPresented: Binding(
+            .alert("Review deposit", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
             )) {
@@ -800,7 +857,57 @@ private struct IncomeClassificationSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .interactiveDismissDisabled(saving)
+        .interactiveDismissDisabled(saving || isAnalyzing)
+    }
+
+    private func analyzeWithAI() {
+        guard !isAnalyzing,
+              shareWithAssistant,
+              let key = KeychainStore.get(KeychainKeys.openAIKey),
+              !key.isEmpty else { return }
+        isAnalyzing = true
+        Task {
+            do {
+                let suggestion = try await IncomeIntelligence(apiKey: key).suggest(
+                    transaction: transaction,
+                    transactionHistory: finance.overview?.recentTransactions ?? []
+                )
+                aiSuggestion = suggestion
+                if suggestion.classification == .income {
+                    sourceName = suggestion.sourceName
+                    sourceType = suggestion.sourceType
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isAnalyzing = false
+        }
+    }
+
+    private func suggestionLabel(_ suggestion: IncomeAISuggestion) -> String {
+        switch suggestion.classification {
+        case .income: "Likely income"
+        case .notIncome: "Likely not income"
+        case .needsReview: "Still uncertain"
+        }
+    }
+
+    private func suggestionTint(_ suggestion: IncomeAISuggestion) -> Color {
+        switch suggestion.classification {
+        case .income: AppTheme.success
+        case .notIncome: AppTheme.secondaryText
+        case .needsReview: AppTheme.warning
+        }
+    }
+
+    private func classificationReasonLabel(_ value: String) -> String {
+        switch value {
+        case "ambiguousTransfer": "A similar transfer could not be matched with enough confidence."
+        case "peerToPeer": "Peer-to-peer deposits are not treated as earnings without confirmation."
+        case "incomeKeyword": "The description looks income-related, but the provider did not confirm it."
+        case "unrecognizedInflow": "This deposit does not have enough evidence to count as income."
+        default: value
+        }
     }
 
     private func save(classification: IncomeClassification) {

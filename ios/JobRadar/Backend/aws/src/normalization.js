@@ -205,6 +205,7 @@ function recurringPayments(transactions, now) {
 
   const today = now.toISOString().slice(0, 10);
   const todayDay = utcDay(today);
+  const rollingYearStart = new Date(now.getTime() - (365 * DAY_MILLISECONDS)).toISOString().slice(0, 10);
   const results = [];
   for (const [key, group] of groups) {
     const cadence = detectCadence(group);
@@ -235,6 +236,9 @@ function recurringPayments(transactions, now) {
     }
 
     const monthlyAmount = roundMoney(typicalAmount * cadence.monthlyFactor);
+    const chargesLast12Months = group.filter(transaction =>
+      transaction.date >= rollingYearStart && transaction.date <= today
+    );
     const confidence = Math.min(0.99, Math.max(0.5,
       cadence.score * 0.65 + amountConsistency * 0.25 + Math.min(group.length / 12, 1) * 0.1
     ));
@@ -249,6 +253,11 @@ function recurringPayments(transactions, now) {
       lastChargeDate: latest.date,
       nextExpectedDate,
       occurrences: cadence.occurrences,
+      chargesLast12Months: chargesLast12Months.length,
+      spentLast12Months: roundMoney(chargesLast12Months.reduce(
+        (total, transaction) => total + transaction.amount,
+        0
+      )),
       isVariable: amounts.some(amount => Math.abs(amount - typicalAmount) > Math.max(1, typicalAmount * 0.05)),
       confidence: Math.round(confidence * 100) / 100
     });
@@ -327,7 +336,7 @@ export function buildOverview(records, now = new Date()) {
   return {
     institutions,
     accounts: accounts.sort((a, b) => a.institutionName.localeCompare(b.institutionName) || a.name.localeCompare(b.name)),
-    recentTransactions: transactions.slice(0, 50),
+    recentTransactions: transactions,
     monthlyInflow,
     monthlyOutflow,
     totalCash,

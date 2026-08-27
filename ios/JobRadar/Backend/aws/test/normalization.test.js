@@ -137,6 +137,26 @@ test("builds compact totals without leaking backend storage fields", () => {
   assert.equal("accessTokenCiphertext" in overview.institutions[0], false);
 });
 
+test("returns every stored transaction for the all-transactions screen", () => {
+  const records = Array.from({ length: 75 }, (_, index) => ({
+    entityType: "TRANSACTION",
+    itemID: "item-1",
+    ...normalizeTransaction({
+      transaction_id: `transaction-${index}`,
+      account_id: "checking-1",
+      date: "2026-08-01",
+      name: `Transaction ${String(index).padStart(2, "0")}`,
+      amount: index + 1,
+      pending: false,
+      iso_currency_code: "USD"
+    })
+  }));
+
+  const overview = buildOverview(records, new Date("2026-08-09T15:00:00Z"));
+
+  assert.equal(overview.recentTransactions.length, 75);
+});
+
 test("detects active recurring payments and normalizes them to a monthly total", () => {
   const dates = ["2026-05-05", "2026-06-05", "2026-07-05", "2026-08-05"];
   const records = dates.map((date, index) => ({
@@ -163,6 +183,8 @@ test("detects active recurring payments and normalizes them to a monthly total",
   assert.equal(overview.recurringPayments[0].amount, 15.99);
   assert.equal(overview.recurringPayments[0].monthlyAmount, 15.99);
   assert.equal(overview.recurringPayments[0].nextExpectedDate, "2026-09-05");
+  assert.equal(overview.recurringPayments[0].chargesLast12Months, 4);
+  assert.equal(overview.recurringPayments[0].spentLast12Months, 63.96);
   assert.equal(overview.monthlyRecurringTotal, 15.99);
 });
 

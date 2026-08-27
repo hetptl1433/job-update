@@ -71,7 +71,7 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Orbit transcribes what you say in voice mode so your assistant can answer using your Orbit data.</string>
 	<key>OpenAIModel</key>
-	<string>gpt-4o-mini</string>
+	<string>gpt-5.6-luna</string>
 	<key>OpenAIRealtimeModel</key>
 	<string>gpt-realtime</string>
 	<key>UIBackgroundModes</key>

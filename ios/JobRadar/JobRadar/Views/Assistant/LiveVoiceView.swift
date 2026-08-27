@@ -28,9 +28,12 @@ struct LiveVoiceView: View {
     @State private var isMintingCredential = false
     @State private var credentialError: String?
     @State private var connectionTask: Task<Void, Never>?
+    @State private var modelRestartTask: Task<Void, Never>?
     @State private var showConnect = false
     @AppStorage("orbit.ai.financeContextEnabled") private var shareFinanceWithAssistant = false
     @AppStorage("orbit.voice.captionsEnabled") private var captionsEnabled = true
+    @AppStorage(AppConfig.openAIRealtimeModelPreferenceKey)
+    private var selectedRealtimeModel = AppConfig.bundledOpenAIRealtimeModel
 
     private var hasAIConnection: Bool {
         app.connections.aiConnected
@@ -41,6 +44,16 @@ struct LiveVoiceView: View {
         if let credentialError { return .failed(credentialError) }
         if isMintingCredential { return .connecting }
         return realtime.phase
+    }
+
+    private var selectedRealtimeModelChoice: AIModelChoice {
+        AppConfig.realtimeModelChoices(including: selectedRealtimeModel)
+            .first { $0.id == selectedRealtimeModel }
+            ?? AIModelChoice(
+                id: selectedRealtimeModel,
+                name: selectedRealtimeModel,
+                detail: selectedRealtimeModel
+            )
     }
 
     var body: some View {
@@ -89,6 +102,9 @@ struct LiveVoiceView: View {
             stopLiveConversation()
         }
         .task {
+            if selectedRealtimeModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                selectedRealtimeModel = AppConfig.bundledOpenAIRealtimeModel
+            }
             if !didRestoreConversation {
                 messages = AssistantConversationStore.load()
                 didRestoreConversation = true
@@ -173,8 +189,8 @@ struct LiveVoiceView: View {
     private func statusBlock(layout: LiveVoiceLayoutMetrics) -> some View {
         VStack(spacing: layout.statusSpacing) {
             Text(statusTitle)
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(.white)
+                .font(.headline.weight(.medium))
+                .foregroundStyle(.white.opacity(0.9))
                 .lineLimit(2)
                 .minimumScaleFactor(0.82)
                 .multilineTextAlignment(.center)
@@ -182,7 +198,7 @@ struct LiveVoiceView: View {
 
             Text(statusDetail)
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(.white.opacity(0.46))
                 .lineLimit(layout.statusLineLimit)
                 .minimumScaleFactor(0.82)
                 .multilineTextAlignment(.center)
@@ -290,56 +306,77 @@ struct LiveVoiceView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Button { endAndDismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 42, height: 42)
-                    .background(.white.opacity(0.09), in: Circle())
-                    .overlay(Circle().strokeBorder(.white.opacity(0.1), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close live voice")
+        ZStack {
+            modelMenu
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Orbit Voice")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                Text("Live conversation")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.48))
-                    .lineLimit(1)
-            }
-            .layoutPriority(1)
+            HStack {
+                Spacer()
 
-            Spacer()
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(isLive ? Color.green : Color.white.opacity(0.3))
-                    .frame(width: 7, height: 7)
-                Text(isLive ? "LIVE" : "VOICE")
-                    .font(.caption2.weight(.bold))
-                    .tracking(0.8)
+                Button { endAndDismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .frame(width: 38, height: 38)
+                        .background(.white.opacity(0.08), in: Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.08), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close live voice")
             }
-            .foregroundStyle(.white.opacity(0.62))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(.white.opacity(0.07), in: Capsule())
-            .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.top, 8)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 6)
+    }
+
+    private var modelMenu: some View {
+        Menu {
+            Section("Live voice model") {
+                ForEach(AppConfig.realtimeModelChoices(including: selectedRealtimeModel)) { choice in
+                    Button {
+                        selectRealtimeModel(choice.id)
+                    } label: {
+                        Label {
+                            Text(choice.name + (choice.isRecommended ? " · Recommended" : ""))
+                        } icon: {
+                            Image(systemName: choice.id == selectedRealtimeModel ? "checkmark" : "circle")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(isLive ? Color(hex: 0x78C99A) : Color.white.opacity(0.28))
+                    .frame(width: 6, height: 6)
+
+                Text("VOICE MODEL: \(selectedRealtimeModelChoice.name.uppercased())")
+                    .font(.caption2.weight(.semibold))
+                    .tracking(0.45)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(.white.opacity(0.68))
+            .padding(.horizontal, 13)
+            .frame(height: 32)
+            .frame(maxWidth: 236)
+            .background(.white.opacity(0.09), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.08), lineWidth: 1))
+        }
+        .accessibilityLabel("Voice model, \(selectedRealtimeModelChoice.name)")
+        .accessibilityHint("Double tap to choose a different live voice model")
     }
 
     private func controls(layout: LiveVoiceLayoutMetrics) -> some View {
-        HStack(alignment: .top, spacing: layout.controlSpacing) {
+        HStack(spacing: layout.controlSpacing) {
             LiveVoiceControl(
                 title: realtime.isMuted ? "Unmute" : "Mute",
                 systemImage: realtime.isMuted ? "mic.slash.fill" : "mic.fill",
                 isSelected: realtime.isMuted,
                 isEnabled: realtime.isActive,
+                role: .microphone,
                 diameter: layout.controlDiameter
             ) {
                 realtime.toggleMute()
@@ -374,6 +411,14 @@ struct LiveVoiceView: View {
                 endAndDismiss()
             }
         }
+        .padding(8)
+        .frame(maxWidth: min(390, layout.size.width - (layout.horizontalPadding * 2)))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(.white.opacity(0.1), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
         .frame(maxWidth: .infinity)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: canRetry)
     }
@@ -435,6 +480,19 @@ struct LiveVoiceView: View {
         )
     }
 
+    private func selectRealtimeModel(_ model: String) {
+        guard model != selectedRealtimeModel else { return }
+        selectedRealtimeModel = model
+
+        guard hasAIConnection else { return }
+        stopLiveConversation()
+        modelRestartTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            startLiveConversation()
+        }
+    }
+
     private func startLiveConversation() {
         guard !isMintingCredential, !realtime.isActive else { return }
         guard let key = KeychainStore.get(KeychainKeys.openAIKey), !key.isEmpty else {
@@ -450,7 +508,7 @@ struct LiveVoiceView: View {
             context: contextBuilder.liveContext(),
             history: messages
         )
-        let model = AppConfig.openAIRealtimeModel
+        let model = selectedRealtimeModel
 
         connectionTask = Task { @MainActor in
             defer { isMintingCredential = false }
@@ -474,6 +532,8 @@ struct LiveVoiceView: View {
     }
 
     private func stopLiveConversation() {
+        modelRestartTask?.cancel()
+        modelRestartTask = nil
         connectionTask?.cancel()
         connectionTask = nil
         isMintingCredential = false
@@ -503,22 +563,22 @@ private struct LiveVoiceBackdrop: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                Color(hex: 0x080A0F)
+                Color(hex: 0x050607)
 
                 Circle()
-                    .fill(glow.opacity(0.2))
-                    .frame(width: 460, height: 460)
-                    .blur(radius: 100)
-                    .offset(x: -170, y: -310)
+                    .fill(glow.opacity(0.1))
+                    .frame(width: 440, height: 440)
+                    .blur(radius: 130)
+                    .offset(x: -150, y: -250)
 
                 Circle()
-                    .fill(Color(hex: 0x7156C8).opacity(0.13))
-                    .frame(width: 390, height: 390)
-                    .blur(radius: 110)
-                    .offset(x: 180, y: 340)
+                    .fill(Color(hex: 0x73839D).opacity(0.07))
+                    .frame(width: 360, height: 360)
+                    .blur(radius: 130)
+                    .offset(x: 170, y: 280)
 
                 LinearGradient(
-                    colors: [.clear, Color.black.opacity(0.34)],
+                    colors: [Color.white.opacity(0.018), .clear, Color.black.opacity(0.5)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -543,7 +603,7 @@ private struct LiveVoiceLayoutMetrics {
     private var usesAccessibilityText: Bool { dynamicTypeSize.isAccessibilitySize }
 
     var horizontalPadding: CGFloat {
-        size.width < 380 ? 14 : 18
+        size.width < 380 ? 14 : 20
     }
 
     var orbDiameter: CGFloat {
@@ -552,10 +612,10 @@ private struct LiveVoiceLayoutMetrics {
             return min(150, max(116, proposed))
         }
 
-        let heightRatio: CGFloat = isShort ? 0.25 : 0.275
+        let heightRatio: CGFloat = isShort ? 0.28 : 0.31
         let accessibilityScale: CGFloat = usesAccessibilityText ? 0.78 : 1
-        let proposed = min(size.width * 0.62, size.height * heightRatio, 238)
-        return max(158, proposed * accessibilityScale)
+        let proposed = min(size.width * 0.68, size.height * heightRatio, 252)
+        return max(168, proposed * accessibilityScale)
     }
 
     var captionHeight: CGFloat {
@@ -571,13 +631,13 @@ private struct LiveVoiceLayoutMetrics {
     var statusLineLimit: Int { usesAccessibilityText ? 4 : 3 }
     var requiresBodyScroll: Bool { isLandscape || usesAccessibilityText || size.height < 700 }
     var statusSpacing: CGFloat { isShort || isLandscape ? 5 : 7 }
-    var sectionSpacing: CGFloat { isLandscape ? 14 : (isShort ? 12 : 18) }
-    var bodyTopPadding: CGFloat { isLandscape ? 4 : (isShort ? 8 : 14) }
+    var sectionSpacing: CGFloat { isLandscape ? 14 : (isShort ? 10 : 16) }
+    var bodyTopPadding: CGFloat { isLandscape ? 4 : (isShort ? 6 : 12) }
     var bodyBottomPadding: CGFloat { isLandscape ? 4 : (isShort ? 8 : 12) }
     var controlsTopPadding: CGFloat { isLandscape || isShort ? 6 : 10 }
-    var controlsBottomPadding: CGFloat { isLandscape ? 2 : 8 }
-    var controlSpacing: CGFloat { size.width < 380 ? 2 : 6 }
-    var controlDiameter: CGFloat { isLandscape || isShort ? 48 : 52 }
+    var controlsBottomPadding: CGFloat { isLandscape ? 2 : 10 }
+    var controlSpacing: CGFloat { size.width < 380 ? 2 : 4 }
+    var controlDiameter: CGFloat { isLandscape || isShort ? 40 : 44 }
     var connectionSpacing: CGFloat { isLandscape || isShort ? 14 : 22 }
 
     var connectionIconDiameter: CGFloat {
@@ -607,81 +667,84 @@ private struct OrbitVoiceOrb: View {
     private var colors: [Color] {
         switch phase {
         case .hearing:
-            [Color(hex: 0x84F1DF), Color(hex: 0x2C9C92), Color(hex: 0x193756)]
+            [Color(hex: 0xB4D8D0), Color(hex: 0x729B96), Color(hex: 0x40575E)]
         case .speaking:
-            [Color(hex: 0xD5B8FF), Color(hex: 0x7669FF), Color(hex: 0x2B326B)]
+            [Color(hex: 0xCAC5DD), Color(hex: 0x8C88A7), Color(hex: 0x4D526C)]
         case .failed:
-            [Color(hex: 0xF0969F), Color(hex: 0xA5364A), Color(hex: 0x421B29)]
+            [Color(hex: 0xD6AFB3), Color(hex: 0x96646C), Color(hex: 0x593D49)]
         case .muted:
-            [Color(hex: 0xBFC3CB), Color(hex: 0x5C6471), Color(hex: 0x282D36)]
+            [Color(hex: 0xB7BBC2), Color(hex: 0x737985), Color(hex: 0x414650)]
         default:
-            [Color(hex: 0xA9C9FF), Color(hex: 0x5F7DFF), Color(hex: 0x243C70)]
+            [Color(hex: 0xC0CCDC), Color(hex: 0x8393AA), Color(hex: 0x46546A)]
         }
     }
 
     var body: some View {
         let scale = diameter / 270
+        let activityScale = 1 + level * 0.1
+        let isMoving = animating && isAnimatedPhase && !reduceMotion
 
         ZStack {
             Circle()
-                .fill(colors[1].opacity(0.16))
-                .frame(width: diameter * 0.933, height: diameter * 0.933)
-                .blur(radius: 28 * scale)
-                .scaleEffect((animating && isAnimatedPhase ? 1.08 : 0.94) + level * 0.1)
+                .fill(colors[1].opacity(0.14))
+                .frame(width: diameter * 0.86, height: diameter * 0.86)
+                .blur(radius: 34 * scale)
+                .scaleEffect((isMoving ? 1.06 : 0.96) + level * 0.08)
 
-            Circle()
-                .stroke(colors[0].opacity(0.18), lineWidth: 1)
-                .frame(width: diameter * 0.822, height: diameter * 0.822)
-                .scaleEffect(1 + level * 0.14)
+            RoundedRectangle(cornerRadius: diameter * 0.24, style: .continuous)
+                .fill(colors[2].opacity(0.72))
+                .frame(width: diameter * 0.67, height: diameter * 0.62)
+                .rotationEffect(.degrees(isMoving ? -17 : -8))
+                .offset(x: isMoving ? -4 : 2, y: 3)
+                .scaleEffect(activityScale)
 
-            Circle()
+            RoundedRectangle(cornerRadius: diameter * 0.25, style: .continuous)
+                .fill(colors[1].opacity(0.78))
+                .frame(width: diameter * 0.64, height: diameter * 0.69)
+                .rotationEffect(.degrees(isMoving ? 17 : 9))
+                .offset(x: isMoving ? 5 : -2, y: -2)
+                .scaleEffect(1 + level * 0.08)
+
+            RoundedRectangle(cornerRadius: diameter * 0.235, style: .continuous)
                 .fill(
-                    RadialGradient(
+                    LinearGradient(
                         colors: [colors[0], colors[1], colors[2]],
-                        center: .topLeading,
-                        startRadius: 5 * scale,
-                        endRadius: diameter * 0.537
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
                 )
-                .frame(width: diameter * 0.696, height: diameter * 0.696)
+                .frame(width: diameter * 0.64, height: diameter * 0.64)
+                .rotationEffect(.degrees(isMoving ? 7 : 3))
                 .overlay {
-                    Circle()
+                    RoundedRectangle(cornerRadius: diameter * 0.235, style: .continuous)
                         .fill(
                             LinearGradient(
-                                colors: [.white.opacity(0.36), .clear, .black.opacity(0.18)],
+                                colors: [.white.opacity(0.22), .clear, .black.opacity(0.12)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
                 }
-                .overlay {
-                    Circle()
-                        .trim(from: 0.08, to: 0.72)
-                        .stroke(
-                            AngularGradient(colors: [.clear, .white.opacity(0.62), .clear], center: .center),
-                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                        )
-                        .padding(11 * scale)
-                        .rotationEffect(.degrees(animating && !reduceMotion ? 360 : 0))
-                }
                 .shadow(
-                    color: colors[1].opacity(0.48),
-                    radius: 38 * scale,
-                    y: 14 * scale
+                    color: colors[1].opacity(0.32),
+                    radius: 34 * scale,
+                    y: 12 * scale
                 )
-                .scaleEffect(1 + level * 0.11)
+                .scaleEffect(activityScale)
 
-            Image(systemName: orbSymbol)
-                .font(.system(size: max(24, 38 * scale), weight: .medium))
-                .symbolEffect(.variableColor.iterative, options: .repeating, isActive: isAnimatedPhase)
-                .foregroundStyle(.white.opacity(0.92))
+            if let orbSymbol {
+                Image(systemName: orbSymbol)
+                    .font(.system(size: max(20, 30 * scale), weight: .medium))
+                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: isAnimatedPhase)
+                    .foregroundStyle(.white.opacity(0.8))
+            }
         }
         .frame(width: diameter, height: diameter)
         .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.72), value: level)
         .animation(.easeInOut(duration: 0.45), value: phase)
         .onAppear {
             guard !reduceMotion else { return }
-            withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
+            withAnimation(.easeInOut(duration: 3.4).repeatForever(autoreverses: true)) {
                 animating = true
             }
         }
@@ -696,12 +759,12 @@ private struct OrbitVoiceOrb: View {
         }
     }
 
-    private var orbSymbol: String {
+    private var orbSymbol: String? {
         switch phase {
         case .connecting: "ellipsis"
         case .muted: "mic.slash.fill"
         case .failed: "exclamationmark"
-        default: "waveform"
+        default: nil
         }
     }
 }
@@ -720,10 +783,11 @@ private struct LiveCaptionsView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(spacing: 10) {
                     if recentMessages.isEmpty, liveUserText.isEmpty, liveAssistantText.isEmpty {
                         Text("Captions will appear here when the conversation begins.")
-                            .foregroundStyle(.white.opacity(0.48))
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.36))
                             .frame(maxWidth: .infinity, alignment: .center)
                             .multilineTextAlignment(.center)
                     } else {
@@ -739,7 +803,8 @@ private struct LiveCaptionsView: View {
                     }
                     Color.clear.frame(height: 1).id("caption-bottom")
                 }
-                .padding(16)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
             .scrollIndicators(.hidden)
             .onChange(of: liveUserText) { _, _ in scrollToBottom(proxy) }
@@ -749,27 +814,23 @@ private struct LiveCaptionsView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
-        .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(.white.opacity(0.09), lineWidth: 1)
-        )
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Live captions")
     }
 
     private func captionLine(role: ChatMessage.Role, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 9) {
+        VStack(spacing: 4) {
             Text(role == .user ? "YOU" : "ORBIT")
                 .font(.caption2.weight(.bold))
-                .tracking(0.7)
-                .foregroundStyle(role == .user ? Color(hex: 0x91C9FF) : Color(hex: 0xC6B5FF))
-                .frame(width: 42, alignment: .leading)
+                .tracking(0.9)
+                .foregroundStyle(.white.opacity(0.3))
             Text(text)
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(.white.opacity(0.76))
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity)
         .id("caption-\(role.rawValue)-\(text)")
     }
 
@@ -781,7 +842,7 @@ private struct LiveCaptionsView: View {
 }
 
 private struct LiveVoiceControl: View {
-    enum Role { case standard, end }
+    enum Role { case standard, microphone, end }
 
     let title: String
     let systemImage: String
@@ -793,16 +854,16 @@ private struct LiveVoiceControl: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(foreground)
                     .frame(width: diameter, height: diameter)
                     .background(background, in: Circle())
                     .overlay(Circle().strokeBorder(border, lineWidth: 1))
                 Text(title)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white.opacity(isEnabled ? 0.66 : 0.28))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(isEnabled ? 0.5 : 0.22))
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
             }
@@ -816,17 +877,26 @@ private struct LiveVoiceControl: View {
 
     private var foreground: Color {
         guard isEnabled else { return .white.opacity(0.24) }
-        return role == .end || isSelected ? .white : .white.opacity(0.88)
+        if role == .end { return Color(hex: 0xF0787D) }
+        if role == .microphone, !isSelected { return Color(hex: 0x86D69E) }
+        return isSelected ? .white : .white.opacity(0.8)
     }
 
     private var background: Color {
-        if role == .end { return Color(hex: 0xD84756) }
+        if role == .end { return Color(hex: 0xD84756).opacity(0.13) }
+        if role == .microphone, !isSelected, isEnabled {
+            return Color(hex: 0x74D08F).opacity(0.14)
+        }
         if isSelected { return .white.opacity(0.2) }
-        return .white.opacity(isEnabled ? 0.09 : 0.04)
+        return .white.opacity(isEnabled ? 0.055 : 0.025)
     }
 
     private var border: Color {
-        role == .end ? .clear : .white.opacity(isSelected ? 0.24 : 0.1)
+        if role == .end { return Color(hex: 0xF0787D).opacity(0.32) }
+        if role == .microphone, !isSelected, isEnabled {
+            return Color(hex: 0x86D69E).opacity(0.22)
+        }
+        return .white.opacity(isSelected ? 0.2 : 0.07)
     }
 }
 

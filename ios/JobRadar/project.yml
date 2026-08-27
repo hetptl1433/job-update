@@ -39,7 +39,7 @@ targets:
         CFBundleDisplayName: Orbit
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        OpenAIModel: gpt-4o-mini
+        OpenAIModel: gpt-5.6-luna
         OpenAIRealtimeModel: gpt-realtime
         APIBaseURL: ""
         FinanceAPIBaseURL: "https://api.ipodeskai.com/"

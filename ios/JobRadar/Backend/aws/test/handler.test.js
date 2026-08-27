@@ -127,5 +127,6 @@ test("mobile Hosted Link includes both required Plaid redirect URIs", () => {
   assert.equal(request.hosted_link.completion_redirect_uri, "orbit://finance");
   assert.equal(request.hosted_link.url_lifetime_seconds, 1_800);
   assert.equal(request.redirect_uri, "https://api.ipodeskai.com/plaid/oauth");
+  assert.equal(request.transactions.days_requested, 365);
   assert.match(request.user.client_user_id, /^orbit_[a-f0-9]{40}$/);
 });

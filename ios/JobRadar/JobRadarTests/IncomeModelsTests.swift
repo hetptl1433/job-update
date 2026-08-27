@@ -354,6 +354,7 @@ final class IncomeWireModelTests: XCTestCase {
         XCTAssertEqual(summary.needsReviewTransactions.first?.classification, .needsReview)
         XCTAssertEqual(summary.expectedPaychecks.first?.estimatedAmount, decimal("1840.25"))
         XCTAssertEqual(summary.coverage?.completeMonths, 7)
+        XCTAssertEqual(summary.confirmedLast12Months, decimal("5110.25"))
     }
 
     func testNullableChangeAndOptionalProjectionFieldsDecodeWhenAbsent() throws {
@@ -467,6 +468,8 @@ final class FinanceOverviewWireModelTests: XCTestCase {
             "lastChargeDate": "2026-08-05",
             "nextExpectedDate": "2026-09-05",
             "occurrences": 5,
+            "chargesLast12Months": 5,
+            "spentLast12Months": 79.95,
             "isVariable": false,
             "confidence": 0.96
           }],
@@ -486,6 +489,8 @@ final class FinanceOverviewWireModelTests: XCTestCase {
 
         XCTAssertEqual(overview.detectedRecurringPayments.first?.cadence, .monthly)
         XCTAssertEqual(overview.detectedRecurringPayments.first?.nextExpectedDate, "2026-09-05")
+        XCTAssertEqual(overview.detectedRecurringPayments.first?.chargesLast12Months, 5)
+        XCTAssertEqual(overview.detectedRecurringPayments.first?.spentLast12Months, 79.95)
         XCTAssertEqual(overview.detectedMonthlyRecurringTotal, 15.99)
         XCTAssertEqual(overview.topSpendingCategories.first?.amount, 700)
     }
@@ -1342,6 +1347,15 @@ final class AIModelPreferenceTests: XCTestCase {
                 reasoningEffort: .low
             )
         XCTAssertNil(compatibilityPayload["reasoning"])
+
+        let assistantPayload = OpenAIClient(apiKey: "test", model: "gpt-5.6-luna")
+            .requestPayload(
+                system: "System",
+                user: "User",
+                reasoningEffort: .medium
+            )
+        let assistantReasoning = try XCTUnwrap(assistantPayload["reasoning"] as? [String: Any])
+        XCTAssertEqual(assistantReasoning["effort"] as? String, "medium")
     }
 }
 

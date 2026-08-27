@@ -69,7 +69,7 @@ enum AppConfig {
     /// installs keep this behavior until the owner chooses another model.
     static var bundledOpenAIModel: String {
         guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenAIModel") as? String,
-              !value.isEmpty else { return "gpt-4o-mini" }
+              !value.isEmpty else { return "gpt-5.6-luna" }
         return value
     }
 
@@ -95,8 +95,7 @@ enum AppConfig {
         AIModelChoice(
             id: "gpt-5.6-terra",
             name: "GPT-5.6 Terra",
-            detail: "Balanced quality and cost for daily use",
-            isRecommended: true
+            detail: "Balanced quality and cost for daily use"
         ),
         AIModelChoice(
             id: "gpt-5.6-sol",
@@ -106,7 +105,8 @@ enum AppConfig {
         AIModelChoice(
             id: "gpt-5.6-luna",
             name: "GPT-5.6 Luna",
-            detail: "Lowest-cost GPT-5.6 option for frequent scans"
+            detail: "Lowest-cost GPT-5.6 option for frequent scans",
+            isRecommended: true
         ),
         AIModelChoice(
             id: "gpt-4o-mini",
