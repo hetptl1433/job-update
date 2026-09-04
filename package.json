@@ -1,7 +1,11 @@
 {
-  "name": "job-update-interview-dashboard",
+  "name": "orbit-interactive-preview",
   "version": "1.0.0",
   "private": true,
+  "scripts": {
+    "build": "node scripts/build-web.mjs",
+    "check:web": "node --check orbit-concept.js && npm run build"
+  },
   "dependencies": {
     "@vercel/blob": "^2.3.0"
   }

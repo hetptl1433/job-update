@@ -3,94 +3,311 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0d1b2a" />
-  <title>Het's Job Radar</title>
-  <meta name="description" content="Het's interview and job status feed." />
-  <link rel="stylesheet" href="styles-radar.css?v=5" />
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" defer></script>
-  <script src="data/seed.js?v=5" defer></script>
-  <script src="app-radar.js?v=5" defer></script>
+  <meta name="theme-color" content="#050506" />
+  <meta name="color-scheme" content="dark" />
+  <title>Orbit — Your life, in motion</title>
+  <meta name="description" content="One calm, connected command center for your tasks, jobs, inbox, money, health, and daily plans. Explore the interactive Orbit preview." />
+  <meta property="og:title" content="Orbit — Your life, in motion" />
+  <meta property="og:description" content="A personal command center that turns the moving parts of your day into one clear plan." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230a0a0b'/%3E%3Ccircle cx='32' cy='32' r='10' fill='%23ff5a64'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="orbit-concept.css?v=4" />
+  <script src="orbit-concept.js?v=4" defer></script>
 </head>
 <body>
-  <main class="shell">
-    <header class="hero">
-      <div class="hero-topline">
-        <div class="brand-lockup">
-          <div class="radar-mark" aria-hidden="true"><i></i><b></b></div>
-          <div><span class="kicker">HET'S SEARCH</span><h1>Job radar</h1></div>
+  <a class="skip-link" href="#phoneShell">Skip to interactive preview</a>
+  <div class="ambient-canvas" aria-hidden="true">
+    <span class="ambient-blob blob-one"></span>
+    <span class="ambient-blob blob-two"></span>
+    <span class="ambient-blob blob-three"></span>
+    <span class="ambient-grid"></span>
+  </div>
+
+  <div class="concept-stage">
+    <aside class="concept-rail" aria-label="About Orbit">
+      <div class="concept-brand">
+        <span class="orbit-mark orbit-mark-large" aria-hidden="true"><i></i><b></b><em></em></span>
+        <span>ORBIT</span>
+        <small><i></i> LIVE PREVIEW</small>
+      </div>
+
+      <div class="concept-copy">
+        <h1>Your life,<br /><em>in motion.</em></h1>
+        <p>Orbit becomes a bold, high-energy command center—clear enough to trust, playful enough to enjoy every day.</p>
+      </div>
+
+      <div class="concept-principles">
+        <article><span>01</span><div><b>One daily story</b><p>Jobs, tasks, inbox, money and health become one calm plan.</p></div></article>
+        <article><span>02</span><div><b>Motion with meaning</b><p>Animation celebrates progress, reveals hierarchy and confirms every action.</p></div></article>
+        <article><span>03</span><div><b>Red with purpose</b><p>Deep black grounds the experience; signal red guides focus, progress and action.</p></div></article>
+      </div>
+
+      <div class="concept-preview-switcher">
+        <span>TRY THE PROTOTYPE</span>
+        <div role="tablist" aria-label="Preview an Orbit screen">
+          <button class="rail-screen active" role="tab" aria-selected="true" aria-controls="screen-home" data-screen="home">Home</button>
+          <button class="rail-screen" role="tab" aria-selected="false" aria-controls="screen-tasks" data-screen="tasks">Tasks</button>
+          <button class="rail-screen" role="tab" aria-selected="false" aria-controls="screen-jobs" data-screen="jobs">Jobs</button>
+          <button class="rail-screen" role="tab" aria-selected="false" aria-controls="screen-finance" data-screen="finance">Finance</button>
+          <button class="rail-screen" role="tab" aria-selected="false" aria-controls="screen-health" data-screen="health">Health</button>
+          <button class="rail-screen" role="tab" aria-selected="false" aria-controls="screen-more" data-screen="more">More</button>
         </div>
-        <div id="syncIndicator" class="sync-indicator local"><span class="sync-dot"></span><span id="syncText">Loading</span></div>
       </div>
-      <div class="attention-block">
-        <div><strong id="attentionCount">0</strong><p>need your attention</p></div>
-        <span id="attentionNote">Nothing urgent right now</span>
+
+      <div class="concept-foot">
+        <p><span></span> Interactive preview · demo data only</p>
+        <button id="previewNudge" type="button">Tap, swipe, explore <i data-icon="arrow"></i></button>
       </div>
-      <div id="metricGrid" class="metric-strip" aria-label="Pipeline summary"></div>
-    </header>
+    </aside>
 
-    <section class="controls" aria-label="Filter applications">
-      <div class="search-box"><span data-icon="search"></span><input id="searchInput" aria-label="Search companies" placeholder="Search company or role" /></div>
-      <div class="tabs" id="filterTabs"></div>
-    </section>
-
-    <section class="feed-section">
-      <div class="feed-heading">
-        <div><span>PIPELINE</span><h2 id="feedTitle">Everything</h2></div>
-        <small id="resultCount">0 companies</small>
+    <main class="phone-shell" id="phoneShell" tabindex="-1" aria-label="Interactive Orbit app preview">
+      <div class="status-bar" aria-hidden="true">
+        <span id="statusTime">9:41</span>
+        <span class="status-island"></span>
+        <span class="status-icons">
+          <svg viewBox="0 0 18 12"><path d="M1 10.5h2V8H1zm4 0h2V5.5H5zm4 0h2V3H9zm4 0h2V.5h-2z" fill="currentColor"/></svg>
+          <svg viewBox="0 0 18 12"><path d="M1 4.7C5.4.8 12.6.8 17 4.7M4 7.3c2.8-2.4 7.2-2.4 10 0M7.1 9.8c1.1-.9 2.7-.9 3.8 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <span class="battery"><i></i></span>
+        </span>
       </div>
-      <div id="trackerBody" class="status-feed"></div>
-      <div id="emptyState" class="empty-state" hidden><div class="empty-radar"></div><h3>No matches</h3><p>Try another status or search.</p></div>
-    </section>
 
-    <footer class="page-footer"><span id="storageCopy">Loading tracker data…</span><span id="lastSync"></span></footer>
-  </main>
+      <div class="app-shell">
+        <header class="app-header">
+          <button class="brand-button" data-screen-jump="home" aria-label="Open Orbit home"><span class="orbit-mark" aria-hidden="true"><i></i><b></b><em></em></span><strong>orbit</strong></button>
+          <div class="header-actions">
+            <span class="demo-label" title="This preview uses sample data">DEMO</span>
+            <button class="streak-pill js-open-sheet" data-sheet="streak" aria-label="Seven day streak"><span data-icon="spark"></span><b>7</b></button>
+            <button class="avatar-button js-open-sheet" data-sheet="profile" aria-label="Open profile">HP<span></span></button>
+          </div>
+        </header>
 
-  <nav class="bottom-dock" aria-label="Tracker actions">
-    <button id="addButton" class="dock-primary"><span data-icon="plus"></span><span>Add company</span></button>
-    <button id="toolsButton" class="dock-more" aria-label="Open tracker tools" aria-expanded="false"><span data-icon="more"></span></button>
-  </nav>
+        <div class="screen-viewport" id="screenViewport">
+          <div class="screen-stack" id="screenStack">
+            <section class="app-screen home-screen active" id="screen-home" role="tabpanel" data-app-screen="home" aria-label="Home">
+              <div class="screen-intro stagger" style="--delay:0">
+                <div><span class="eyebrow" id="dateEyebrow">TODAY</span><h2>Hey Het, <span>let’s flow.</span></h2></div>
+                <button class="sun-button js-open-sheet" data-sheet="energy" aria-label="Open daily energy"><span data-icon="sun"></span></button>
+              </div>
 
-  <div id="toolsBackdrop" class="tools-backdrop" hidden>
-    <section class="tools-sheet" aria-label="Tracker tools">
-      <div class="sheet-grabber"></div>
-      <div class="sheet-heading"><div><span>TRACKER TOOLS</span><h2>Manage your data</h2></div><button id="closeTools" class="icon-button" aria-label="Close"><span data-icon="close"></span></button></div>
-      <div class="tool-grid">
-        <button id="importButton" class="tool-action"><span data-icon="upload"></span><b>Import</b><small>Excel or JSON</small></button>
-        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv,.json" hidden />
-        <button id="exportButton" class="tool-action"><span data-icon="download"></span><b>Export</b><small>Download Excel</small></button>
+              <article class="daily-brief stagger" id="dailyBrief" style="--delay:1">
+                <div class="brief-orbit" aria-hidden="true"><i></i><i></i><i></i><span>3<small>WINS</small></span></div>
+                <div class="brief-content">
+                  <span class="eyebrow light">YOUR DAILY FLOW</span>
+                  <h3>Small wins.<br />Big momentum.</h3>
+                  <p>One follow-up, a focus block and an evening reset.</p>
+                  <button id="startDayButton"><span>Start my day</span><i data-icon="arrow"></i></button>
+                </div>
+                <span class="brief-spark spark-a" aria-hidden="true">✦</span><span class="brief-spark spark-b" aria-hidden="true">✦</span>
+                <div class="brief-progress" aria-hidden="true"><i></i></div>
+              </article>
+
+              <section class="section-block stagger" style="--delay:2">
+                <div class="section-heading"><div><span class="eyebrow">UP NEXT</span><h3>Your day</h3></div><button class="text-button js-open-sheet" data-sheet="calendar">See all <span data-icon="chevron"></span></button></div>
+                <button class="next-up-card js-open-sheet" data-sheet="meeting" aria-label="Open Portfolio design review">
+                  <span class="time-tile"><b>10:30</b><span>AM</span></span>
+                  <span class="event-copy"><span class="event-type"><i></i> IN 28 MIN</span><b>Portfolio design review</b><small><span data-icon="video"></span> Google Meet · 45 min</small></span>
+                  <span class="event-arrow" aria-hidden="true"><span data-icon="arrow-up"></span></span>
+                </button>
+              </section>
+
+              <section class="quick-grid stagger" style="--delay:3" aria-label="Daily overview">
+                <button class="quick-card task-card" data-screen-jump="tasks">
+                  <span class="quick-icon violet"><span data-icon="check"></span></span><span class="quick-label">TO DO</span><strong><b id="homeTaskCount">5</b> left</strong>
+                  <span class="mini-progress"><i id="homeTaskProgress"></i></span><small>2 already done</small>
+                </button>
+                <button class="quick-card inbox-card js-open-sheet" data-sheet="inbox">
+                  <span class="quick-icon coral"><span data-icon="inbox"></span></span><span class="notification-dot">2</span><span class="quick-label">INBOX</span><strong>Fresh news</strong>
+                  <span class="mini-avatars"><i>G</i><i>M</i><i>i</i></span><small>2 sample updates</small>
+                </button>
+              </section>
+
+              <section class="section-block stagger" style="--delay:4">
+                <div class="section-heading compact"><div><span class="eyebrow">IN MOTION</span><h3>Job hunt</h3></div><button class="text-button" data-screen-jump="jobs">Open tracker <span data-icon="chevron"></span></button></div>
+                <button class="pipeline-card" data-screen-jump="jobs">
+                  <span class="company-stack" aria-hidden="true"><i class="company-g">G</i><i class="company-a">A</i><i class="company-n">N</i></span>
+                  <span class="pipeline-copy"><b id="homeJobCount">3 conversations moving</b><small>Google moved to final round</small></span>
+                  <span class="pipeline-meter"><i></i><b>68%</b></span><span class="pipeline-arrow" data-icon="arrow"></span>
+                </button>
+              </section>
+
+              <section class="life-grid stagger" style="--delay:5" aria-label="Life signals">
+                <button class="life-card health-card" data-screen-jump="health"><span class="life-top"><i data-icon="heart"></i><small>HEALTH</small></span><strong>82</strong><span>Ready for more</span><span class="energy-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span></button>
+                <button class="life-card finance-card" data-screen-jump="finance"><span class="life-top"><i data-icon="wallet"></i><small>SPENDING</small></span><strong>$48</strong><span>of $75 today</span><span class="spend-track" aria-hidden="true"><i></i></span></button>
+              </section>
+
+              <button class="ask-orbit stagger" id="askOrbit" style="--delay:6"><span class="tiny-orb"><i></i></span><span><b>Ask Orbit anything</b><small>Plan, find, summarize, remember…</small></span><i data-icon="waveform"></i></button>
+            </section>
+
+            <section class="app-screen tasks-screen" id="screen-tasks" role="tabpanel" data-app-screen="tasks" aria-label="To Do">
+              <div class="screen-intro screen-title"><div><span class="eyebrow">MAKE SPACE</span><h2>Your <span>day.</span></h2></div><button class="add-button js-open-sheet" data-sheet="new-task" aria-label="Add a task"><span data-icon="plus"></span></button></div>
+
+              <div class="date-strip" role="group" aria-label="Choose a date">
+                <button><span>MON</span><b>24</b></button><button><span>TUE</span><b>25</b></button><button><span>WED</span><b>26</b></button><button class="active"><span>TODAY</span><b>27</b><i></i></button><button><span>FRI</span><b>28</b></button>
+              </div>
+
+              <button class="focus-banner js-open-sheet" data-sheet="focus" aria-label="Open 25 minute Google preparation focus"><span class="focus-icon"><i data-icon="bolt"></i></span><span><small>ORBIT PICKED YOUR FOCUS</small><b>Prep for Google final round</b></span><span class="focus-timer">25:00 <i data-icon="play"></i></span></button>
+
+              <div class="task-summary"><div><span class="eyebrow">TODAY</span><h3><span id="taskDoneCount">2</span> of <span id="taskTotalCount">7</span> complete</h3></div><div class="task-ring" aria-label="29 percent complete"><span id="taskPercent">29%</span></div></div>
+
+              <div class="task-list" id="taskList">
+                <article class="task-row high" data-task data-task-id="google-prep"><button class="task-toggle" aria-label="Mark Prep questions for Google complete"><span data-icon="check"></span></button><div><small>JOB SEARCH · HIGH</small><b>Prep questions for Google</b><span><i data-icon="clock"></i> 10:00 AM · 25 min</span></div><button class="task-more js-open-sheet" data-sheet="task" aria-label="Open Prep questions for Google details"><span data-icon="more"></span></button></article>
+                <article class="task-row" data-task data-task-id="recruiter-reply"><button class="task-toggle" aria-label="Mark Reply to recruiter complete"><span data-icon="check"></span></button><div><small>INBOX</small><b>Reply to Maya’s recruiter email</b><span><i data-icon="clock"></i> Before noon</span></div><button class="task-more js-open-sheet" data-sheet="task" aria-label="Open Reply to recruiter details"><span data-icon="more"></span></button></article>
+                <article class="task-row done" data-task data-task-id="morning-walk"><button class="task-toggle" aria-label="Mark Morning walk incomplete"><span data-icon="check"></span></button><div><small>WELLBEING</small><b>20 minute morning walk</b><span><i data-icon="check-circle"></i> Done at 8:12 AM</span></div><button class="task-more js-open-sheet" data-sheet="task" aria-label="Open Morning walk details"><span data-icon="more"></span></button></article>
+                <article class="task-row" data-task data-task-id="portfolio-update"><button class="task-toggle" aria-label="Mark Update portfolio case study complete"><span data-icon="check"></span></button><div><small>PERSONAL</small><b>Update portfolio case study</b><span><i data-icon="clock"></i> 2:00 PM · 45 min</span></div><button class="task-more js-open-sheet" data-sheet="task" aria-label="Open Portfolio case study details"><span data-icon="more"></span></button></article>
+                <article class="task-row done" data-task data-task-id="budget-review"><button class="task-toggle" aria-label="Mark Review budget incomplete"><span data-icon="check"></span></button><div><small>FINANCE</small><b>Review weekly budget</b><span><i data-icon="check-circle"></i> Done yesterday</span></div><button class="task-more js-open-sheet" data-sheet="task" aria-label="Open Budget review details"><span data-icon="more"></span></button></article>
+                <article class="task-row" data-task data-task-id="call-mom"><button class="task-toggle" aria-label="Mark Call Mom complete"><span data-icon="check"></span></button><div><small>PERSONAL</small><b>Call Mom</b><span><i data-icon="clock"></i> 7:30 PM</span></div><button class="task-more js-open-sheet" data-sheet="task" aria-label="Open Call Mom details"><span data-icon="more"></span></button></article>
+                <article class="task-row" data-task data-task-id="gym-clothes"><button class="task-toggle" aria-label="Mark Set out gym clothes complete"><span data-icon="check"></span></button><div><small>WELLBEING</small><b>Set out gym clothes</b><span><i data-icon="clock"></i> Tonight</span></div><button class="task-more js-open-sheet" data-sheet="task" aria-label="Open Gym clothes task details"><span data-icon="more"></span></button></article>
+              </div>
+            </section>
+
+            <section class="app-screen finance-screen" id="screen-finance" role="tabpanel" data-app-screen="finance" aria-label="Finance">
+              <div class="screen-intro screen-title">
+                <div><span class="eyebrow">YOUR MONEY</span><h2>Finance<span>.</span></h2></div>
+                <button class="add-button js-open-sheet" data-sheet="finance" aria-label="Open finance details"><span data-icon="wallet"></span></button>
+              </div>
+
+              <article class="finance-dashboard-hero">
+                <div class="finance-hero-head"><span>AVAILABLE NOW</span><small><i></i> SAMPLE DATA</small></div>
+                <strong>$4,820<small>.64</small></strong>
+                <p>Across checking and everyday savings</p>
+                <svg class="balance-chart" viewBox="0 0 340 92" preserveAspectRatio="none" aria-label="Balance increased this month">
+                  <defs><linearGradient id="balanceGlow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5a64" stop-opacity=".34"/><stop offset="1" stop-color="#ff5a64" stop-opacity="0"/></linearGradient></defs>
+                  <path class="balance-area" d="M0 76 C30 69 42 75 67 61 S102 65 126 49 S165 58 188 38 S222 42 249 29 S286 36 340 12 L340 92 L0 92Z"></path>
+                  <path class="balance-line" d="M0 76 C30 69 42 75 67 61 S102 65 126 49 S165 58 188 38 S222 42 249 29 S286 36 340 12"></path>
+                  <circle cx="340" cy="12" r="4"></circle>
+                </svg>
+                <div class="finance-hero-foot"><span><small>SAFE TO SPEND</small><b>$540</b></span><span><small>THIS MONTH</small><b class="positive">+$730</b></span></div>
+              </article>
+
+              <section class="money-pulse-grid" aria-label="Finance summary">
+                <article><span class="money-icon"><i data-icon="arrow-up"></i></span><small>CASH FLOW</small><strong>+$1,240</strong><p>18% better than July</p></article>
+                <article><span class="money-icon neutral"><i data-icon="calendar"></i></span><small>UPCOMING</small><strong>$286</strong><p>3 bills this week</p></article>
+              </section>
+
+              <section class="section-block finance-section">
+                <div class="section-heading"><div><span class="eyebrow" id="spendingMonth">THIS MONTH</span><h3>Spending plan</h3></div><button class="text-button js-open-sheet" data-sheet="finance">Details <span data-icon="chevron"></span></button></div>
+                <article class="spending-card">
+                  <div class="spending-total"><span><small>SPENT</small><b>$1,864</b></span><span><small>PLAN</small><b>$2,500</b></span></div>
+                  <div class="spending-main-track"><i></i></div>
+                  <div class="spending-category"><span><i class="category-dot red"></i><b>Home & bills</b></span><small>$840</small><div><i style="width:72%"></i></div></div>
+                  <div class="spending-category"><span><i class="category-dot white"></i><b>Food & dining</b></span><small>$426</small><div><i style="width:54%"></i></div></div>
+                  <div class="spending-category"><span><i class="category-dot gray"></i><b>Everything else</b></span><small>$598</small><div><i style="width:38%"></i></div></div>
+                </article>
+              </section>
+
+              <section class="section-block">
+                <div class="section-heading"><div><span class="eyebrow">LATEST</span><h3>Activity</h3></div><button class="text-button js-open-sheet" data-sheet="finance">See all <span data-icon="chevron"></span></button></div>
+                <div class="money-activity-list">
+                  <div><span class="transaction-icon">GT</span><span><b>Garden Table</b><small>Dining · Today</small></span><strong>−$18.40</strong></div>
+                  <div><span class="transaction-icon dark"><i data-icon="wallet"></i></span><span><b>Direct deposit</b><small>Income · Yesterday</small></span><strong class="positive">+$2,460</strong></div>
+                  <div><span class="transaction-icon">TR</span><span><b>IndyGo Transit</b><small>Travel · Yesterday</small></span><strong>−$6.00</strong></div>
+                </div>
+              </section>
+            </section>
+
+            <section class="app-screen health-screen" id="screen-health" role="tabpanel" data-app-screen="health" aria-label="Health">
+              <div class="screen-intro screen-title">
+                <div><span class="eyebrow">YOUR RHYTHM</span><h2>Health<span>.</span></h2></div>
+                <button class="add-button js-open-sheet" data-sheet="health" aria-label="Open health details"><span data-icon="heart"></span></button>
+              </div>
+
+              <article class="health-dashboard-hero">
+                <div class="health-hero-copy"><span><i></i> SAMPLE HEALTH SIGNALS</span><h3>Ready for more.</h3><p>Your recovery signals are above your 30-day baseline.</p></div>
+                <div class="readiness-orbit" aria-label="Readiness score 82"><span><b>82</b><small>READY</small></span><i></i></div>
+                <div class="health-guidance"><span data-icon="spark"></span><p><b>Orbit suggests</b><small>A focused workout fits before 6 PM.</small></p><span data-icon="chevron"></span></div>
+              </article>
+
+              <section class="health-signal-grid" aria-label="Health signals">
+                <article><span data-icon="moon"></span><small>SLEEP</small><strong>7h 42</strong><p>91 · Great</p></article>
+                <article><span data-icon="bolt"></span><small>MOVE</small><strong>620</strong><p>of 750 kcal</p></article>
+                <article><span data-icon="heart"></span><small>HRV</small><strong>58</strong><p>+12% baseline</p></article>
+              </section>
+
+              <button class="health-insight-card js-open-sheet" data-sheet="health">
+                <span class="insight-orbit" data-icon="spark"></span>
+                <span><small>ORBIT INSIGHT</small><b>Your best recovery this week</b><p>Consistent sleep raised HRV while resting heart rate stayed low.</p></span>
+                <i data-icon="arrow-up"></i>
+              </button>
+
+              <section class="section-block">
+                <div class="section-heading"><div><span class="eyebrow">TODAY</span><h3>Move & recover</h3></div><button class="text-button js-open-sheet" data-sheet="health">Explore <span data-icon="chevron"></span></button></div>
+                <article class="movement-card">
+                  <div class="movement-ring"><span><b>83%</b><small>MOVE</small></span></div>
+                  <div class="movement-copy"><div><span><i class="red"></i>Move</span><b>620 / 750 kcal</b></div><div><span><i class="white"></i>Exercise</span><b>38 / 45 min</b></div><div><span><i class="gray"></i>Stand</span><b>9 / 12 hr</b></div></div>
+                </article>
+              </section>
+
+              <button class="sleep-summary-card js-open-sheet" data-sheet="health" aria-label="Open last night's sleep details">
+                <span class="sleep-summary-title"><span data-icon="moon"></span><span><small>LAST NIGHT</small><b>Deep, consistent sleep</b></span></span>
+                <strong>91<small>SCORE</small></strong>
+                <span class="sleep-stage-strip" aria-hidden="true"><i class="awake"></i><i class="rem"></i><i class="core"></i><i class="deep"></i><i class="core long"></i></span>
+              </button>
+            </section>
+
+            <section class="app-screen jobs-screen" id="screen-jobs" role="tabpanel" data-app-screen="jobs" aria-label="Jobs">
+              <div class="screen-intro screen-title"><div><span class="eyebrow">YOUR NEXT MOVE</span><h2>Job <span>hunt.</span></h2></div><button class="add-button coral-button js-open-sheet" data-sheet="new-job" aria-label="Add a job"><span data-icon="plus"></span></button></div>
+
+              <article class="job-hero"><div class="job-hero-copy"><span>THIS WEEK</span><strong id="jobActiveCount">3</strong><p>conversations<br />moving forward</p></div><div class="job-radar" aria-hidden="true"><i></i><i></i><i></i><b>✦</b><span class="radar-dot one"></span><span class="radar-dot two"></span><span class="radar-dot three"></span></div></article>
+
+              <div class="job-filters" role="tablist" aria-label="Filter jobs"><button class="active" role="tab" aria-selected="true" data-job-filter="all">All <span>4</span></button><button role="tab" aria-selected="false" data-job-filter="active">Active <span>3</span></button><button role="tab" aria-selected="false" data-job-filter="final">Final <span>2</span></button></div>
+
+              <div class="job-list" id="jobList">
+                <article class="job-card" data-job-status="active final"><button class="job-card-main js-open-sheet" data-sheet="google-job"><span class="company-logo google">G</span><span class="job-copy"><small>FINAL ROUND · TOMORROW</small><b>Google</b><span>Product Designer · Indianapolis</span></span><span class="fit-score">92<small>FIT</small></span></button><div class="job-action"><span><i></i> Interview at 2:00 PM</span><button class="js-job-prep">Prep with Orbit <i data-icon="spark"></i></button></div></article>
+                <article class="job-card" data-job-status="active"><button class="job-card-main js-open-sheet" data-sheet="amazon-job"><span class="company-logo amazon">a</span><span class="job-copy"><small>TEAM INTERVIEW</small><b>Amazon</b><span>UX Designer · Remote</span></span><span class="fit-score sky">86<small>FIT</small></span></button><div class="job-action"><span><i class="amber"></i> Follow up today</span><button class="js-follow-up">Draft follow-up <i data-icon="arrow"></i></button></div></article>
+                <article class="job-card" data-job-status="active final"><button class="job-card-main js-open-sheet" data-sheet="notion-job"><span class="company-logo notion">N</span><span class="job-copy"><small>FINAL ROUND · NEXT TUESDAY</small><b>Notion</b><span>Product Designer · New York</span></span><span class="fit-score lime">89<small>FIT</small></span></button><div class="job-action"><span><i></i> Portfolio shared</span><button class="js-open-sheet" data-sheet="notion-job">View details <i data-icon="arrow"></i></button></div></article>
+                <article class="job-card" data-job-status="saved"><button class="job-card-main js-open-sheet" data-sheet="saved-job"><span class="company-logo figma">F</span><span class="job-copy"><small>SAVED</small><b>Figma</b><span>Product Designer · Remote</span></span><span class="fit-score muted">78<small>FIT</small></span></button><div class="job-action"><span><i class="muted"></i> Saved 2 days ago</span><button class="js-open-sheet" data-sheet="saved-job">Review role <i data-icon="arrow"></i></button></div></article>
+              </div>
+            </section>
+
+            <section class="app-screen more-screen" id="screen-more" role="tabpanel" data-app-screen="more" aria-label="More">
+              <div class="screen-intro screen-title"><div><span class="eyebrow">ALL TOGETHER</span><h2>Your <span>universe.</span></h2></div><button class="avatar-button large js-open-sheet" data-sheet="profile">HP<span></span></button></div>
+
+              <article class="universe-card"><div class="universe-copy"><span>ORBIT PULSE</span><h3>You’re beautifully<br />on track.</h3><p>Five parts of your day are synced and moving together.</p></div><div class="universe-orbit" aria-hidden="true"><span class="core">O</span><i class="planet p1">✓</i><i class="planet p2">♥</i><i class="planet p3">$</i><i class="planet p4">✦</i></div></article>
+
+              <div class="service-grid">
+                <button class="service-card tasks" data-screen-jump="tasks"><span class="service-icon"><i data-icon="checklist"></i></span><strong>To Do</strong><small id="moreTaskSummary">5 tasks left today</small><i data-icon="arrow-up"></i></button>
+                <button class="service-card jobs" data-screen-jump="jobs"><span class="service-icon"><i data-icon="briefcase"></i></span><strong>Jobs</strong><small id="moreJobSummary">3 conversations moving</small><i data-icon="arrow-up"></i></button>
+                <button class="service-card inbox js-open-sheet" data-sheet="inbox"><span class="service-icon"><i data-icon="inbox"></i><b>2</b></span><strong>Inbox</strong><small>3 accounts synced</small><i data-icon="arrow-up"></i></button>
+                <button class="service-card calendar js-open-sheet" data-sheet="calendar"><span class="service-icon"><i data-icon="calendar"></i></span><strong>Calendar</strong><small>4 events today</small><i data-icon="arrow-up"></i></button>
+                <button class="service-card automations js-open-sheet" data-sheet="automations"><span class="service-icon"><i data-icon="bolt"></i></span><strong>Automations</strong><small>6 routines running</small><i data-icon="arrow-up"></i></button>
+                <button class="service-card memories js-open-sheet" data-sheet="memory"><span class="service-icon"><i data-icon="brain"></i></span><strong>Memory</strong><small>12 things remembered</small><i data-icon="arrow-up"></i></button>
+              </div>
+
+              <button class="settings-row js-open-sheet" data-sheet="connections"><span data-icon="link"></span><span><b>Connected services</b><small>Gmail, Outlook, Calendar, Health</small></span><i data-icon="chevron"></i></button>
+              <button class="settings-row js-open-sheet" data-sheet="profile"><span data-icon="settings"></span><span><b>Orbit settings</b><small>Appearance, notifications and privacy</small></span><i data-icon="chevron"></i></button>
+            </section>
+          </div>
+        </div>
+
+        <nav class="bottom-bar" aria-label="Primary navigation">
+          <button class="dock-tab active" data-screen="home" aria-current="page"><span class="dock-icon" data-icon="home"></span><small>Home</small></button>
+          <button class="dock-tab" data-screen="finance"><span class="dock-icon" data-icon="wallet"></span><small>Finance</small></button>
+          <button class="voice-button" id="voiceButton" aria-label="Open the Orbit assistant demo"><span><i></i><b data-icon="waveform"></b></span><small>Orbit</small></button>
+          <button class="dock-tab" data-screen="health"><span class="dock-icon" data-icon="heart"></span><small>Health</small></button>
+          <button class="dock-tab" data-screen="more"><span class="dock-icon" data-icon="grid"></span><small>More</small></button>
+        </nav>
+
+        <section class="voice-layer" id="voiceLayer" hidden aria-label="Orbit voice assistant" aria-modal="true" role="dialog">
+          <header><button id="closeVoice" aria-label="Close Orbit"><span data-icon="close"></span></button><span>ORBIT DEMO</span><button class="voice-history js-open-sheet" data-sheet="memory" aria-label="Open conversation history"><span data-icon="history"></span></button></header>
+          <div class="voice-copy"><span class="eyebrow light">READY WHEN YOU ARE</span><h2 id="voiceHeading">What should<br />we plan?</h2><p id="voiceResponse">Choose a prompt to see how Orbit connects your day.</p></div>
+          <div class="voice-visual" id="voiceVisual" aria-hidden="true"><i></i><i></i><i></i><span><b></b><b></b><b></b><b></b><b></b></span></div>
+          <div class="voice-prompts" aria-label="Suggested prompts"><button data-voice-prompt="Plan my afternoon">Plan my afternoon</button><button data-voice-prompt="Prep me for Google">Prep me for Google</button><button data-voice-prompt="What needs attention?">What needs attention?</button></div>
+          <button class="voice-stop" id="voiceStop" aria-label="Pause assistant animation"><span data-icon="stop"></span></button><small class="voice-hint">Interactive assistant preview · no microphone used</small>
+        </section>
+
+        <div class="sheet-backdrop" id="sheetBackdrop" hidden aria-hidden="true">
+          <section class="detail-sheet" id="detailSheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <header class="sheet-header"><span class="sheet-badge" id="sheetBadge"><i data-icon="spark"></i></span><div><small id="sheetEyebrow">ORBIT DETAIL</small><h2 id="sheetTitle">Your day</h2></div><button id="closeSheet" aria-label="Close details"><span data-icon="close"></span></button></header>
+            <div class="sheet-content" id="sheetContent"></div>
+          </section>
+        </div>
+
+        <div class="toast" id="toast" role="status" aria-live="polite" hidden><span data-icon="check-circle"></span><b id="toastText">Done</b></div>
       </div>
-      <label class="password-field"><span>Admin password</span><input id="adminPassword" type="password" placeholder="Enter password" /></label>
-      <button id="saveButton" class="save-button"><span data-icon="save"></span> Save online</button>
-    </section>
+    </main>
   </div>
-
-  <div id="modalBackdrop" class="modal-backdrop" hidden>
-    <form id="editForm" class="edit-modal">
-      <div class="sheet-grabber"></div>
-      <div class="modal-head"><div><span>APPLICATION</span><h2 id="modalTitle">Update status</h2></div><button id="closeModal" type="button" class="icon-button" aria-label="Close"><span data-icon="close"></span></button></div>
-      <div class="form-grid">
-        <label class="form-field wide"><span>Company</span><input name="company" required /></label>
-        <label class="form-field wide"><span>Role</span><input name="role" required /></label>
-        <label class="form-field"><span>Status</span><select name="status"></select></label>
-        <label class="form-field"><span>Stage</span><select name="stage"></select></label>
-        <label class="form-field"><span>Priority</span><select name="priority"></select></label>
-        <label class="form-field"><span>Follow-up</span><input type="date" name="followUpDate" /></label>
-        <label class="form-field"><span>Invite date</span><input type="date" name="inviteDate" /></label>
-        <label class="form-field"><span>Interview date</span><input type="date" name="interviewDate" /></label>
-        <label class="form-field wide"><span>Next action</span><textarea name="nextAction" rows="3"></textarea></label>
-        <label class="form-field wide"><span>Contact</span><input name="contact" /></label>
-        <label class="form-field wide"><span>Mode / location</span><input name="mode" /></label>
-        <label class="form-field wide"><span>Source / evidence</span><input name="source" /></label>
-        <label class="form-field wide"><span>Notes</span><textarea name="notes" rows="3"></textarea></label>
-      </div>
-      <div class="modal-actions">
-        <button id="deleteButton" type="button" class="delete-button"><span data-icon="trash"></span> Delete</button>
-        <a id="sourceButton" class="source-button" target="_blank" rel="noreferrer"><span data-icon="external"></span> Source</a>
-        <button id="cancelButton" type="button" class="cancel-button">Cancel</button>
-        <button class="update-button" type="submit">Update</button>
-      </div>
-    </form>
-  </div>
-  <div id="toast" class="toast" hidden></div>
+  <noscript><p class="no-script">Orbit’s interactive preview needs JavaScript enabled.</p></noscript>
 </body>
 </html>
