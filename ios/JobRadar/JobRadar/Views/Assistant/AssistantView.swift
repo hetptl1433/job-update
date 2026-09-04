@@ -17,7 +17,10 @@ struct AssistantView: View {
     @State private var showConnect = false
     @State private var showMemory = false
     @State private var didRestoreConversation = false
+    @State private var didSubmitInitialPrompt = false
     @AppStorage("orbit.ai.financeContextEnabled") private var shareFinanceWithAssistant = false
+    @AppStorage("orbit.ai.healthContextEnabled") private var shareHealthWithAssistant = false
+    private let initialPrompt: String
 
     private let suggestions = [
         "Did any recruiter contact me today?",
@@ -32,6 +35,7 @@ struct AssistantView: View {
     ]
 
     init(initialPrompt: String = "") {
+        self.initialPrompt = initialPrompt
         _input = State(initialValue: initialPrompt)
     }
 
@@ -81,11 +85,15 @@ struct AssistantView: View {
             guard didRestoreConversation else { return }
             AssistantConversationStore.save(messages)
         }
+        .onChange(of: app.connections.aiConnected) { _, connected in
+            if connected { submitInitialPromptIfNeeded() }
+        }
         .task {
             if !didRestoreConversation {
                 messages = AssistantConversationStore.load()
                 didRestoreConversation = true
             }
+            submitInitialPromptIfNeeded()
         }
     }
 
@@ -227,7 +235,8 @@ struct AssistantView: View {
             app: app,
             inbox: inbox,
             jobs: jobs,
-            shareFinance: shareFinanceWithAssistant
+            shareFinance: shareFinanceWithAssistant,
+            shareHealth: shareHealthWithAssistant
         )
     }
 
@@ -266,6 +275,16 @@ struct AssistantView: View {
                 sending = false
             }
         }
+    }
+
+    private func submitInitialPromptIfNeeded() {
+        let prompt = initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard app.connections.aiConnected,
+              !didSubmitInitialPrompt,
+              !prompt.isEmpty else { return }
+        didSubmitInitialPrompt = true
+        input = prompt
+        send()
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {

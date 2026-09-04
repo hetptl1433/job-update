@@ -1,8 +1,8 @@
 import SwiftData
 import SwiftUI
 
-/// The command center. Answers "what do I need to know or do right now?" — not
-/// an analytics dashboard. Hierarchy: attention → what changed → what's next → ask AI.
+/// The command center. Answers "what do I need to do right now?" with To Do as
+/// the dominant first surface, followed by the rest of the day's context.
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var inbox: EmailRepository
@@ -27,23 +27,34 @@ struct HomeView: View {
         NavigationStack {
             GeometryReader { viewport in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                        greeting
-                        aiInput
+                    LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xxl) {
                         todoSection
+                            .padding(AppTheme.Spacing.xl)
                             .frame(
-                                minHeight: max(320, viewport.size.height * 0.46),
-                                alignment: .top
+                                maxWidth: .infinity,
+                                minHeight: min(max(360, viewport.size.height * 0.5), 480),
+                                alignment: .topLeading
                             )
-                        financeSummary
+                            .background(
+                                AppTheme.primarySurface,
+                                in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                                    .strokeBorder(AppTheme.border, lineWidth: 1)
+                            }
+
                         attentionSection
                         todaySection
                         jobsSummary
                         inboxSummary
                         syncBanner
+                        financeSummary
                         healthSummary
+                        assistantSection
                     }
                     .padding(AppTheme.Spacing.lg)
+                    .padding(.bottom, AppTheme.Spacing.xxl)
                 }
                 .background(AppTheme.background)
                 .refreshable { await app.refreshDashboard() }
@@ -60,7 +71,13 @@ struct HomeView: View {
                 .sheet(isPresented: $showCalendar) { CalendarTimelineView() }
                 .sheet(isPresented: $showHealth) { HealthView() }
                 .sheet(item: $editingTask) { item in
-                    TaskEditor(item: item) { tasks.add($0) }
+                    TaskEditor(item: item) { saved in
+                        if tasks.tasks.contains(where: { $0.id == saved.id }) {
+                            tasks.update(saved)
+                        } else {
+                            tasks.add(saved)
+                        }
+                    }
                 }
                 .task {
                     await app.jobs.refresh()
@@ -75,14 +92,9 @@ struct HomeView: View {
     // MARK: Greeting
 
     private var greeting: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(timeGreeting + ",")
-                .font(.title.weight(.bold))
-                .foregroundStyle(AppTheme.primaryText)
-            Text(app.user?.firstName ?? "there")
-                .font(.title.weight(.bold))
-                .foregroundStyle(AppTheme.secondaryText)
-        }
+        Text("\(timeGreeting), \(app.user?.firstName ?? "there")")
+            .font(.subheadline)
+            .foregroundStyle(AppTheme.secondaryText)
     }
 
     private var timeGreeting: String {
@@ -94,6 +106,13 @@ struct HomeView: View {
     }
 
     // MARK: AI input
+
+    private var assistantSection: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(title: "Ask Orbit")
+            aiInput
+        }
+    }
 
     private var aiInput: some View {
         HStack(spacing: AppTheme.Spacing.sm) {
@@ -176,50 +195,105 @@ struct HomeView: View {
     // MARK: To do
 
     private var todoSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-            HStack(spacing: AppTheme.Spacing.md) {
-                Text("To do").sectionLabel()
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                    Text("To Do")
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundStyle(AppTheme.primaryText)
+                    greeting
+                    Text(todoSummary)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
                 Spacer()
-                Button("See all") { app.selectedTab = .tasks }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AppTheme.secondaryText)
                 Button { editingTask = TaskItem(title: "") } label: {
-                    Image(systemName: "plus.circle.fill").font(.title3)
+                    Image(systemName: "plus")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(AppTheme.onBrand)
+                        .frame(width: 44, height: 44)
+                        .background(AppTheme.brand, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(AppTheme.primaryText)
                 .accessibilityLabel("Add To Do")
             }
+
+            Divider().overlay(AppTheme.separator)
+
             if tasks.prioritizedOpen.isEmpty {
-                HStack(spacing: AppTheme.Spacing.md) {
-                    Image(systemName: "checkmark.circle").foregroundStyle(AppTheme.secondaryText)
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.largeTitle)
+                        .foregroundStyle(AppTheme.secondaryText)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Nothing urgent").font(.subheadline.weight(.semibold))
+                        Text("Nothing urgent")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(AppTheme.primaryText)
                         Text("Add a task or scan email for suggested actions.")
-                            .font(.caption).foregroundStyle(AppTheme.secondaryText)
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.secondaryText)
                     }
-                    Spacer()
-                    Button { app.selectedTab = .tasks } label: { Image(systemName: "plus") }
-                        .tint(AppTheme.primaryText)
+                    Button {
+                        app.selectedTab = .tasks
+                    } label: {
+                        Label("Add your first task", systemImage: "plus")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
                 }
-                .padding(.vertical, AppTheme.Spacing.md)
+                .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(tasks.prioritizedOpen.prefix(8).enumerated()), id: \.element.id) { index, task in
-                        TaskRow(item: task, onToggle: { tasks.toggle(task) })
-                        if index < min(tasks.prioritizedOpen.count, 8) - 1 { Divider().overlay(AppTheme.separator) }
+                    ForEach(Array(tasks.prioritizedOpen.prefix(7).enumerated()), id: \.element.id) { index, task in
+                        HomeTaskRow(
+                            item: task,
+                            onToggle: { tasks.toggle(task) },
+                            onEdit: { editingTask = task }
+                        )
+                        if index < min(tasks.prioritizedOpen.count, 7) - 1 {
+                            Divider().overlay(AppTheme.separator)
+                        }
                     }
                 }
             }
+
             if !tasks.suggestions.isEmpty {
                 Button {
                     app.selectedTab = .tasks
                 } label: {
-                    Label("\(tasks.suggestions.count) suggested action\(tasks.suggestions.count == 1 ? "" : "s") from email", systemImage: "sparkles")
-                        .font(.caption.weight(.semibold)).foregroundStyle(AppTheme.primaryText)
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(AppTheme.brand)
+                        Text("\(tasks.suggestions.count) suggested action\(tasks.suggestions.count == 1 ? "" : "s") from email")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppTheme.primaryText)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    .padding(AppTheme.Spacing.md)
+                    .background(
+                        AppTheme.secondarySurface,
+                        in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
+                    )
                 }
+                .buttonStyle(.plain)
             }
+
+            Button("See all") {
+                app.selectedTab = .tasks
+            }
+            .buttonStyle(SecondaryButtonStyle(fullWidth: true))
         }
+    }
+
+    private var todoSummary: String {
+        let openCount = tasks.prioritizedOpen.count
+        let dueTodayCount = tasks.prioritizedOpen.filter(\.isDueToday).count
+        if dueTodayCount > 0 {
+            return "\(openCount) open · \(dueTodayCount) due today"
+        }
+        return "\(openCount) open"
     }
 
     // MARK: Needs your attention
@@ -277,29 +351,51 @@ struct HomeView: View {
 
     private var jobsSummary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: "Jobs")
-            VStack(spacing: AppTheme.Spacing.md) {
-                HStack(spacing: AppTheme.Spacing.xl) {
-                    metric("\(jobs.filter { !$0.isClosed }.count)", "Active")
-                    metric("\(jobs.filter { $0.status == .interview || $0.status == .finalInterview }.count)", "Interviews")
-                    metric("\(jobs.filter { [.applied, .screening, .recruiterContact].contains($0.status) }.count)", "Waiting")
-                    metric("\(attention.count)", "Follow-ups")
-                }
+            SectionHeader(title: "Jobs", actionTitle: "Open") { app.selectedTab = .jobs }
+            VStack(spacing: 0) {
+                metric("\(jobs.filter { !$0.isClosed }.count)", "Active applications")
+                Divider().overlay(AppTheme.separator)
+                metric("\(jobs.filter { $0.status == .interview || $0.status == .finalInterview }.count)", "Interviews")
+                Divider().overlay(AppTheme.separator)
+                metric("\(jobs.filter { [.applied, .screening, .recruiterContact].contains($0.status) }.count)", "Waiting for a response")
+                Divider().overlay(AppTheme.separator)
+                metric("\(attention.count)", "Follow-ups due")
+
                 if let recent = jobs.prefix(3).map({ $0 }).nilIfEmpty {
                     Divider().overlay(AppTheme.separator)
-                    ForEach(recent) { job in CompactJobRow(job: job) }
+                    Text("Recently updated")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, AppTheme.Spacing.lg)
+                        .padding(.top, AppTheme.Spacing.lg)
+
+                    ForEach(Array(recent.enumerated()), id: \.element.id) { index, job in
+                        CompactJobRow(job: job)
+                            .padding(.horizontal, AppTheme.Spacing.lg)
+                            .padding(.vertical, AppTheme.Spacing.md)
+                        if index < recent.count - 1 {
+                            Divider().overlay(AppTheme.separator)
+                                .padding(.leading, AppTheme.Spacing.lg)
+                        }
+                    }
                 }
             }
-            .cardSurface()
+            .cardSurface(padding: 0)
         }
     }
 
     private func metric(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.title2.weight(.bold)).foregroundStyle(AppTheme.primaryText)
-            Text(label).font(.caption).foregroundStyle(AppTheme.secondaryText)
+        HStack(spacing: AppTheme.Spacing.md) {
+            Text(label)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(AppTheme.primaryText)
+            Spacer()
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(AppTheme.primaryText)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(AppTheme.Spacing.lg)
     }
 
     // MARK: Inbox summary
@@ -379,7 +475,7 @@ struct HomeView: View {
         if case let .loaded(overview) = app.finance.state {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                 SectionHeader(title: "Finance", actionTitle: "View", action: { app.selectedTab = .finance })
-                HStack(spacing: 0) {
+                VStack(spacing: 0) {
                     HomeFinanceMetric(
                         title: "Cash",
                         value: overview.totalCash.formatted(
@@ -387,6 +483,7 @@ struct HomeView: View {
                         ),
                         tint: AppTheme.success
                     )
+                    Divider().overlay(AppTheme.separator)
                     HomeFinanceMetric(
                         title: "Cards owed",
                         value: overview.totalCreditBalance.formatted(
@@ -394,6 +491,7 @@ struct HomeView: View {
                         ),
                         tint: AppTheme.coral
                     )
+                    Divider().overlay(AppTheme.separator)
                     HomeFinanceMetric(
                         title: "Month net",
                         value: overview.monthlyNetFlow.formatted(
@@ -402,7 +500,7 @@ struct HomeView: View {
                         tint: overview.monthlyNetFlow >= 0 ? AppTheme.success : AppTheme.coral
                     )
                 }
-                .cardSurface()
+                .cardSurface(padding: 0)
             }
         }
     }
@@ -412,18 +510,31 @@ struct HomeView: View {
             SectionHeader(title: "Health", actionTitle: "Details", action: { showHealth = true })
             switch app.health.state {
             case .loaded(let summary):
-                HStack(spacing: 0) {
-                    ForEach(summary.metrics.prefix(4)) { value in
-                        VStack(spacing: 3) {
-                            Image(systemName: value.systemImage).font(.caption).foregroundStyle(AppTheme.brand)
-                            Text(value.value).font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.primaryText)
-                                .lineLimit(1).minimumScaleFactor(0.7)
-                            Text(value.title).font(.caption2).foregroundStyle(AppTheme.secondaryText).lineLimit(1)
+                VStack(spacing: 0) {
+                    ForEach(Array(summary.metrics.prefix(4).enumerated()), id: \.element.id) { index, value in
+                        HStack(spacing: AppTheme.Spacing.md) {
+                            Image(systemName: value.systemImage)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppTheme.brand)
+                                .frame(width: 36, height: 36)
+                                .background(AppTheme.secondarySurface, in: Circle())
+                            Text(value.title)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(AppTheme.primaryText)
+                            Spacer()
+                            Text(value.value)
+                                .font(.headline.weight(.semibold))
+                                .foregroundStyle(AppTheme.primaryText)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
                         }
-                        .frame(maxWidth: .infinity)
+                        .padding(AppTheme.Spacing.lg)
+                        if index < min(summary.metrics.count, 4) - 1 {
+                            Divider().overlay(AppTheme.separator)
+                        }
                     }
                 }
-                .cardSurface()
+                .cardSurface(padding: 0)
             case .loading:
                 LoadingStateView(message: "Loading Apple Health…").cardSurface()
             case .empty:
@@ -444,22 +555,104 @@ struct HomeView: View {
     }
 }
 
+private struct HomeTaskRow: View {
+    let item: TaskItem
+    let onToggle: () -> Void
+    let onEdit: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: AppTheme.Spacing.md) {
+            Button(action: onToggle) {
+                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(item.isCompleted ? AppTheme.success : AppTheme.brand)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(item.isCompleted ? "Mark incomplete" : "Mark complete")
+
+            Button(action: onEdit) {
+                HStack(spacing: AppTheme.Spacing.md) {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                        Text(item.title)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(item.isCompleted ? AppTheme.tertiaryText : AppTheme.primaryText)
+                            .strikethrough(item.isCompleted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if !item.notes.isEmpty {
+                            Text(item.notes)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if hasMetadata {
+                            HStack(spacing: AppTheme.Spacing.xs) {
+                                if item.isOverdue {
+                                    Text("Overdue").foregroundStyle(AppTheme.destructive)
+                                } else if let due = item.dueDate {
+                                    Text(due.formatted(
+                                        date: item.isDueToday ? .omitted : .abbreviated,
+                                        time: .shortened
+                                    ))
+                                }
+                                if item.source != .manual {
+                                    if item.dueDate != nil { Text("·") }
+                                    Text(item.source.label)
+                                }
+                                if item.priority == .high {
+                                    Image(systemName: "exclamationmark")
+                                }
+                                if item.dueDate != nil, item.effectiveAlertStyle != .none {
+                                    Image(systemName: item.effectiveAlertStyle == .alarm ? "alarm" : "bell")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                        }
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Edit \(item.title)")
+        }
+        .padding(.vertical, AppTheme.Spacing.sm)
+    }
+
+    private var hasMetadata: Bool {
+        item.dueDate != nil || item.source != .manual || item.priority == .high
+    }
+}
+
 private struct HomeFinanceMetric: View {
     var title: String
     var value: String
     var tint: Color
 
     var body: some View {
-        VStack(spacing: 3) {
-            Circle().fill(tint).frame(width: 6, height: 6)
+        HStack(spacing: AppTheme.Spacing.md) {
+            Circle()
+                .fill(tint)
+                .frame(width: 9, height: 9)
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(AppTheme.primaryText)
+            Spacer()
             Text(value)
-                .font(.subheadline.weight(.semibold))
+                .font(.headline.weight(.semibold))
                 .foregroundStyle(AppTheme.primaryText)
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
-            Text(title).font(.caption2).foregroundStyle(AppTheme.secondaryText).lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
-        .frame(maxWidth: .infinity)
+        .padding(AppTheme.Spacing.lg)
     }
 }
 

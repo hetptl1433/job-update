@@ -1,8 +1,8 @@
 import Foundation
 
 /// Health data access. Separated from the UI so the concrete HealthKit provider
-/// can be swapped or mocked. HealthKit permissions are requested only when the
-/// user taps "Connect Apple Health" — never during onboarding.
+/// can be swapped or mocked. HealthKit permissions are first requested when the
+/// user connects and checked again from the Health screen when categories grow.
 protocol HealthProviding {
     var isAvailable: Bool { get }
     func requestAuthorization() async throws
@@ -44,7 +44,7 @@ final class HealthRepository: ObservableObject {
         state = .loading
         do {
             let summary = try await provider.summary()
-            state = summary.metrics.isEmpty ? .empty : .loaded(summary)
+            state = summary.hasRecentData ? .loaded(summary) : .empty
         } catch {
             state = .failed(error.localizedDescription)
         }

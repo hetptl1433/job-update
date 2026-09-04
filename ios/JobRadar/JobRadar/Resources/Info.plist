@@ -65,7 +65,7 @@
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Orbit shows your sleep, steps, workouts and heart data in your daily summary. This information stays on your device unless you choose to share it.</string>
+	<string>Orbit shows your activity, sleep, workouts, heart, mobility, body measurements, and mindfulness data in private summaries. This information stays on your device unless you choose to share it.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Orbit uses the microphone only while you use voice mode to ask your assistant a question.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

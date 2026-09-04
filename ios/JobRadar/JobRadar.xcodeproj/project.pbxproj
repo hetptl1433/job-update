@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		00A2139F9B0792C0EE61C1F1 /* TaskAlertScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5685F558140F0AD9C1B5082 /* TaskAlertScheduler.swift */; };
+		A1C0D5E7F8B90123456789AB /* HealthDetailViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0D5E7F8B90123456789AC /* HealthDetailViews.swift */; };
 		0410E675C9F89B2977505160 /* WatchTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CADD225759473938F1C62DA /* WatchTasksView.swift */; };
 		063C7042816E9CC752F98992 /* IncomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE206F479CD751D793501449 /* IncomeView.swift */; };
 		0A54B14B087712E487BC5324 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A8C891ED8B931275D311E9 /* AppDelegate.swift */; };
@@ -195,6 +196,7 @@
 		9FC343A20B40D82C59F783A8 /* TaskRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRepository.swift; sourceTree = "<group>"; };
 		A003E5C361168415CDA11A84 /* RealtimeClientSecretProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeClientSecretProvider.swift; sourceTree = "<group>"; };
 		A149CC4FEE24F218065193DC /* JobRadarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JobRadarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1C0D5E7F8B90123456789AC /* HealthDetailViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDetailViews.swift; sourceTree = "<group>"; };
 		AA64D209496530B835D58DE0 /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
 		ACDE3B61367785DDDEF1C81A /* JobRadar.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = JobRadar.entitlements; sourceTree = "<group>"; };
 		B2C92CD2B8640D66E3CBCC82 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -355,6 +357,7 @@
 		5954E5311DC23DAB84D3DFA4 /* Health */ = {
 			isa = PBXGroup;
 			children = (
+				A1C0D5E7F8B90123456789AC /* HealthDetailViews.swift */,
 				ECD9B66ADF909794E6305D8B /* HealthView.swift */,
 			);
 			path = Health;
@@ -776,6 +779,7 @@
 				F2D273D0E80250C0CD055A79 /* GoogleCalendarAPIClient.swift in Sources */,
 				86429CAB680D9B19445B6A29 /* HealthKitProvider.swift in Sources */,
 				0FA42EE1425054BF9C253D6B /* HealthRepository.swift in Sources */,
+				A1C0D5E7F8B90123456789AB /* HealthDetailViews.swift in Sources */,
 				232BDA959969FEE792201E7C /* HealthView.swift in Sources */,
 				CC83A21919DB9E7E9CACEC09 /* HomeView.swift in Sources */,
 				F4817B665273A489299E4C6D /* InboxView.swift in Sources */,

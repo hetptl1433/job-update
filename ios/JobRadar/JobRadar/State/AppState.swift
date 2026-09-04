@@ -49,7 +49,7 @@ struct AppAlert: Identifiable {
 /// routes purely off `phase`; individual screens read the service objects.
 @MainActor
 final class AppState: ObservableObject {
-    enum Tab: Hashable { case home, tasks, inbox, jobs, finance }
+    enum Tab: Hashable { case home, tasks, inbox, jobs, finance, health, more }
     enum AssistantLaunch: String, Identifiable {
         case chat
         case voice
@@ -67,6 +67,7 @@ final class AppState: ObservableObject {
     @Published var selectedTab: Tab = .home
     @Published var financePath: [FinanceRoute] = []
     @Published var assistantLaunch: AssistantLaunch?
+    @Published var assistantInitialPrompt: String?
     /// The single signed-in identity (one email).
     @Published private(set) var user: UserSession?
     /// Connected mailboxes. `user` remains the one primary Orbit identity while
@@ -169,6 +170,11 @@ final class AppState: ObservableObject {
             selectedTab = .home
             assistantLaunch = .voice
         }
+    }
+
+    func openAssistant(prompt: String? = nil) {
+        assistantInitialPrompt = prompt
+        assistantLaunch = .chat
     }
 
     // MARK: Authentication (single identity)
@@ -510,8 +516,8 @@ final class AppState: ObservableObject {
 
     // MARK: Apple Health
 
-    /// Request HealthKit authorization and load the summary. Permissions are
-    /// requested only here, when the user explicitly connects Health.
+    /// Request any HealthKit categories that still need a decision, then load
+    /// the summary. HealthKit does not re-prompt for categories already decided.
     func connectHealth() async {
         let connected = await health.connect()
         connections.healthConnected = connected
@@ -574,6 +580,9 @@ final class AppState: ObservableObject {
             jobs: jobs.allApplications(),
             shareFinance: UserDefaults.standard.bool(
                 forKey: "orbit.ai.financeContextEnabled"
+            ),
+            shareHealth: UserDefaults.standard.bool(
+                forKey: "orbit.ai.healthContextEnabled"
             )
         ).liveContext()
         let instructions = AssistantPrompt.realtimeInstructions(
@@ -1129,6 +1138,7 @@ final class AppState: ObservableObject {
         assistantMemory.unload()
         emailScanHistory.unload()
         assistantLaunch = nil
+        assistantInitialPrompt = nil
         financePath = []
         phase = .signedOut
     }

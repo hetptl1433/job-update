@@ -13,12 +13,17 @@ final class FinanceRepository: ObservableObject {
     @Published private(set) var hostedLinkNotice: String?
     @Published private(set) var refreshError: String?
     @Published private(set) var snapshotDate: Date?
+    @Published private(set) var isSmartCategorizing = false
+    @Published private(set) var smartCategorizationMessage: String?
 
     private let api: any FinanceDataProviding
     private let auth: AuthenticationManager
     private let defaults: UserDefaults
     private let snapshotStore: ProtectedSnapshotStore<FinanceOverview>
+    private let categoryMemoryStore: ProtectedSnapshotStore<FinanceCategoryMemory>
+    private var categoryMemory: FinanceCategoryMemory
     private var lastNetworkRefreshAt: Date?
+    private var smartCategorizationTask: Task<Void, Never>?
 
     private static let pendingHostedLinkKey = "orbit.finance.pendingHostedLink"
     private static let automaticRefreshInterval: TimeInterval = 120
@@ -27,16 +32,26 @@ final class FinanceRepository: ObservableObject {
         api: any FinanceDataProviding,
         auth: AuthenticationManager,
         defaults: UserDefaults = .standard,
-        snapshotStore: ProtectedSnapshotStore<FinanceOverview>? = nil
+        snapshotStore: ProtectedSnapshotStore<FinanceOverview>? = nil,
+        categoryMemoryStore: ProtectedSnapshotStore<FinanceCategoryMemory>? = nil
     ) {
         self.api = api
         self.auth = auth
         self.defaults = defaults
         self.snapshotStore = snapshotStore
             ?? ProtectedSnapshotStore(filename: "orbit-finance-overview-v1.json")
+        self.categoryMemoryStore = categoryMemoryStore
+            ?? ProtectedSnapshotStore(filename: "orbit-finance-category-memory-v1.json")
 
-        if let snapshot = self.snapshotStore.load(ownerID: UserSession.restore()?.userID) {
-            state = snapshot.value.accounts.isEmpty ? .empty : .loaded(snapshot.value)
+        let ownerID = UserSession.restore()?.userID
+        let savedMemory = self.categoryMemoryStore.load(ownerID: ownerID)?.value
+        self.categoryMemory = savedMemory?.version == FinanceCategoryMemory.currentVersion
+            ? savedMemory!
+            : FinanceCategoryMemory()
+
+        if let snapshot = self.snapshotStore.load(ownerID: ownerID) {
+            let categorized = self.categoryMemory.applying(to: snapshot.value)
+            state = categorized.accounts.isEmpty ? .empty : .loaded(categorized)
             snapshotDate = snapshot.savedAt
             lastNetworkRefreshAt = snapshot.savedAt
         } else if !api.isConfigured {
@@ -49,6 +64,7 @@ final class FinanceRepository: ObservableObject {
     var incomeOverview: IncomeOverview? { incomeState.value }
     var isConnected: Bool { !(overview?.accounts.isEmpty ?? true) }
     var hasPendingHostedLink: Bool { pendingHostedLinkID != nil }
+    var learnedMerchantCategoryCount: Int { categoryMemory.learnedRuleCount }
 
     func load(showLoading: Bool = true, forceRefresh: Bool = false) async {
         guard api.isConfigured else {
@@ -63,6 +79,7 @@ final class FinanceRepository: ObservableObject {
             if isConnected, incomeState.value == nil {
                 await loadIncome(showLoading: false)
             }
+            organizeUnknownTransactions()
             return
         }
 
@@ -244,6 +261,12 @@ final class FinanceRepository: ObservableObject {
         refreshError = nil
     }
 
+    /// Starts a bounded background pass only for merchants still categorized
+    /// as Other. Saved merchant rules are reused on every later sync.
+    func organizeUnknownTransactions() {
+        scheduleSmartCategorization(for: state.value)
+    }
+
     func disconnect(itemID: String) async throws {
         await refreshBackendIdentity()
         _ = try await api.disconnectFinanceConnection(itemID)
@@ -252,23 +275,87 @@ final class FinanceRepository: ObservableObject {
     }
 
     func clear() {
+        smartCategorizationTask?.cancel()
+        smartCategorizationTask = nil
         state = .disconnected
         incomeState = .disconnected
         isConnecting = false
         isRefreshing = false
         hostedLinkNotice = nil
         refreshError = nil
+        isSmartCategorizing = false
+        smartCategorizationMessage = nil
         snapshotDate = nil
         lastNetworkRefreshAt = nil
         pendingHostedLinkID = nil
         snapshotStore.remove()
+        categoryMemoryStore.remove()
+        categoryMemory = FinanceCategoryMemory()
     }
 
     private func apply(_ overview: FinanceOverview) {
-        state = overview.accounts.isEmpty ? .empty : .loaded(overview)
-        incomeState = overview.accounts.isEmpty ? .empty : incomeState
+        let categorized = categoryMemory.applying(to: overview)
+        state = categorized.accounts.isEmpty ? .empty : .loaded(categorized)
+        incomeState = categorized.accounts.isEmpty ? .empty : incomeState
         snapshotDate = .now
-        snapshotStore.save(overview, ownerID: UserSession.restore()?.userID)
+        snapshotStore.save(categorized, ownerID: UserSession.restore()?.userID)
+        scheduleSmartCategorization(for: categorized)
+    }
+
+    private func scheduleSmartCategorization(for overview: FinanceOverview?) {
+        smartCategorizationTask?.cancel()
+        smartCategorizationTask = nil
+        guard let overview,
+              let key = KeychainStore.get(KeychainKeys.openAIKey),
+              !key.isEmpty else {
+            isSmartCategorizing = false
+            return
+        }
+        let samples = categoryMemory.unclassifiedSamples(in: overview)
+        guard !samples.isEmpty else {
+            isSmartCategorizing = false
+            return
+        }
+
+        smartCategorizationTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runSmartCategorization(samples: samples, apiKey: key)
+        }
+    }
+
+    private func runSmartCategorization(
+        samples: [FinanceMerchantSample],
+        apiKey: String
+    ) async {
+        isSmartCategorizing = true
+        smartCategorizationMessage = nil
+        defer { isSmartCategorizing = false }
+        do {
+            let learnedRules = try await FinanceCategoryIntelligence(apiKey: apiKey).classify(samples)
+            try Task.checkCancellation()
+            guard !learnedRules.isEmpty else { return }
+
+            var updatedMemory = categoryMemory
+            updatedMemory.remember(learnedRules)
+            let ownerID = UserSession.restore()?.userID
+            guard categoryMemoryStore.save(updatedMemory, ownerID: ownerID) else {
+                smartCategorizationMessage = "Smart categories could not be saved securely, so no transaction was changed."
+                return
+            }
+
+            categoryMemory = updatedMemory
+            if let current = state.value {
+                let categorized = categoryMemory.applying(to: current)
+                state = categorized.accounts.isEmpty ? .empty : .loaded(categorized)
+                snapshotStore.save(categorized, ownerID: ownerID)
+            }
+            let count = learnedRules.count
+            smartCategorizationMessage = "Learned \(count) merchant categor\(count == 1 ? "y" : "ies") for future transactions."
+        } catch is CancellationError {
+            // A newer bank sync superseded this batch.
+        } catch {
+            smartCategorizationMessage = "Smart categorization will retry later: \(error.localizedDescription)"
+        }
     }
 
     private var pendingHostedLinkID: String? {

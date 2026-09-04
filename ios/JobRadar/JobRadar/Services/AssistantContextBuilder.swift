@@ -1,32 +1,36 @@
 import Foundation
 
 /// Builds the same privacy-filtered Orbit snapshot for typed chat, iPhone live
-/// voice, and the paired Watch. Finance details are included only after the
-/// user explicitly enables assistant sharing.
+/// voice, and the paired Watch. Finance and derived Health details are included
+/// only after the user explicitly enables each assistant-sharing preference.
 @MainActor
 struct AssistantContextBuilder {
     let app: AppState
     let inbox: EmailRepository
     let jobs: [JobApplication]
     let shareFinance: Bool
+    let shareHealth: Bool
 
     init(
         app: AppState,
         inbox: EmailRepository,
         jobs: [JobApplication],
-        shareFinance: Bool
+        shareFinance: Bool,
+        shareHealth: Bool = false
     ) {
         self.app = app
         self.inbox = inbox
         self.jobs = jobs
         self.shareFinance = shareFinance
+        self.shareHealth = shareHealth
     }
 
-    /// A full session snapshot. The probe opts into each finance detail branch,
-    /// but the builder still omits all Finance data unless sharing is enabled.
+    /// A full session snapshot. The probe opts into Finance and Health branches,
+    /// but the builder still omits either category unless its sharing preference
+    /// is enabled.
     func liveContext() -> AssistantContext {
         var snapshot = context(
-            for: "finance money account balance transaction income paycheck salary"
+            for: "finance money account balance transaction income paycheck salary health sleep stress body load heart HRV respiratory workout steps mindfulness"
         )
         snapshot.memoryLines = app.assistantMemory.approvedForLiveSession().map {
             "- [\($0.category.rawValue)] \($0.text)"
@@ -36,14 +40,14 @@ struct AssistantContextBuilder {
 
     func context(for prompt: String) -> AssistantContext {
         var lines: [String] = []
+        let lowerPrompt = prompt.lowercased()
         lines.append("Connections: Gmail \(app.connections.gmailConnected ? "connected" : "not connected"), Outlook \(app.connections.outlookConnected ? "connected" : "not connected"), Calendar \(app.calendar.connectedProviders.map(\.label).sorted().joined(separator: ", ")), Health \(app.connections.healthConnected ? "connected" : "not connected").")
 
         if shareFinance, case let .loaded(finance) = app.finance.state {
             let code = finance.currencyCode
             lines.append("User-approved Finance summary (currency \(code)):")
-            lines.append("- cash=\(finance.totalCash); credit-card balance=\(finance.totalCreditBalance); investments=\(finance.totalInvestments); current-month inflow=\(finance.monthlyInflow); outflow=\(finance.monthlyOutflow); net=\(finance.monthlyNetFlow)")
+            lines.append("- cash=\(finance.totalCash); credit-card balance=\(finance.totalCreditBalance); investments=\(finance.totalInvestments); current-month inflow=\(finance.adjustedMonthlyInflow); spending=\(finance.adjustedMonthlyOutflow); net=\(finance.monthlyNetFlow)")
 
-            let lowerPrompt = prompt.lowercased()
             let asksAboutFinance = [
                 "money", "finance", "account", "balance", "cash", "card", "credit",
                 "spend", "spent", "transaction", "bill", "subscription", "income",
@@ -61,9 +65,10 @@ struct AssistantContextBuilder {
             }
 
             if asksAboutFinance, !asksAboutIncome, !finance.recentTransactions.isEmpty {
+                lines.append("Accounting rule: count only nature=purchase as spending. Credit-card payments and account transfers stay visible as activity but must never be added to spending or income.")
                 lines.append("Recent normalized transactions:")
                 for transaction in finance.recentTransactions.prefix(15) {
-                    lines.append("- \(transaction.date); \(transaction.displayName); \(transaction.direction.rawValue)=\(transaction.amount) \(transaction.currencyCode); category=\(transaction.category ?? "unknown")")
+                    lines.append("- \(transaction.date); \(transaction.displayName); \(transaction.direction.rawValue)=\(transaction.amount) \(transaction.currencyCode); category=\(transaction.displayCategory); nature=\(transaction.resolvedNature.rawValue); countsAsSpending=\(transaction.countsAsSpending)")
                 }
             }
 
@@ -143,9 +148,14 @@ struct AssistantContextBuilder {
             }
         }
 
-        if case let .loaded(summary) = app.health.state {
-            lines.append("Current Apple Health summary:")
-            lines.append(summary.metrics.map { "\($0.title): \($0.value)" }.joined(separator: "; "))
+        let asksAboutHealth = [
+            "health", "sleep", "stress", "body load", "hrv", "heart", "cardio",
+            "oxygen", "respiratory", "breathing", "workout", "exercise", "steps",
+            "walking", "mindful", "weight", "body fat", "bmi", "temperature",
+            "recovery", "readiness"
+        ].contains { lowerPrompt.contains($0) }
+        if shareHealth, asksAboutHealth, case let .loaded(summary) = app.health.state {
+            appendHealthContext(summary, to: &lines)
         }
 
         let enabledAutomations = app.automations.automations.filter(\.enabled)
@@ -164,5 +174,77 @@ struct AssistantContextBuilder {
             lines: lines,
             memoryLines: memoryLines
         )
+    }
+
+    private func appendHealthContext(_ summary: HealthSummary, to lines: inout [String]) {
+        let analytics = summary.analytics()
+        lines.append("USER-APPROVED APPLE HEALTH DERIVED SUMMARY (updated \(summary.updatedAt.formatted(date: .abbreviated, time: .shortened))):")
+        lines.append("- Safety: recorded observations and Orbit estimates only; Body Load is not measured psychological stress, readiness, a diagnosis, causation, a risk score, or medical advice. Preserve missing-data and coverage caveats.")
+
+        let todayValues = [
+            summary.steps.map { "steps=\(Int($0))" },
+            summary.activeEnergyKilocalories.map { "active energy=\(healthNumber($0, digits: 0)) kcal" },
+            summary.exerciseMinutes.map { "exercise=\(healthNumber($0, digits: 0)) min" },
+            summary.standHours.map { "stand=\(healthNumber($0, digits: 0)) hr" },
+            summary.walkingRunningDistanceMiles.map { "distance=\(healthNumber($0, digits: 1)) mi" }
+        ].compactMap { $0 }
+        lines.append(todayValues.isEmpty
+            ? "- Today so far: no approved activity values returned."
+            : "- Today so far (partial day): " + todayValues.joined(separator: "; "))
+
+        lines.append("- Overall completed-day comparison: \(analytics.overallTrend.title). \(analytics.overallTrend.detail)")
+        for comparison in analytics.overallTrend.comparisons {
+            lines.append("- weekly comparison \(comparison.title): recent 7 completed-day average=\(healthNumber(comparison.currentAverage, digits: 1)) \(comparison.unit); previous 7=\(healthNumber(comparison.previousAverage, digits: 1)) \(comparison.unit); change=\(signedHealthPercent(comparison.percentChange)); recorded coverage met the local 3-day-per-period minimum")
+        }
+
+        let load = analytics.bodyLoad
+        lines.append("- Body Load estimate: level=\(load.level.title); index=\(load.index.map(String.init) ?? "unavailable/collecting"); confidence=\(load.confidence?.rawValue ?? "unavailable"); \(load.detail)")
+        for factor in load.factors {
+            lines.append("- Body Load factor \(factor.title): current=\(healthNumber(factor.currentValue, digits: 1)) \(factor.unit); personal median=\(healthNumber(factor.baselineValue, digits: 1)) \(factor.unit); difference=\(signedHealthPercent(factor.percentDifference)); baseline days=\(factor.baselineDays); state=\(factor.state.rawValue)")
+        }
+
+        for series in summary.metricSeries {
+            let points = series.points(for: .sevenDays)
+            guard !points.isEmpty else { continue }
+            let average = points.reduce(0) { $0 + $1.value } / Double(points.count)
+            let latest = points.max { $0.date < $1.date }
+            lines.append("- 7-day signal \(series.metric.title): average=\(healthNumber(average, digits: series.metric.fractionDigits)) \(series.metric.unit); latest=\(latest.map { healthNumber($0.value, digits: series.metric.fractionDigits) } ?? "unavailable") \(series.metric.unit); recorded days=\(points.count)")
+        }
+
+        let recentNights = summary.sleepHistory
+            .filter { HealthTimeRange.sevenDays.contains($0.sleepDay) }
+            .sorted { $0.endDate < $1.endDate }
+        if let latest = summary.sleepHistory.max(by: { $0.endDate < $1.endDate }) {
+            lines.append("- Latest sleep: start=\(latest.startDate.formatted(date: .abbreviated, time: .shortened)); end=\(latest.endDate.formatted(date: .abbreviated, time: .shortened)); asleep=\(healthDuration(latest.asleepDuration)); in-bed=\(latest.inBedDuration.map(healthDuration) ?? "unavailable"); efficiency=\(latest.efficiency.map { healthNumber($0, digits: 0) + "%" } ?? "unavailable because coherent in-bed data was not returned"); REM=\(healthDuration(latest.remDuration)); core=\(healthDuration(latest.coreDuration)); deep=\(healthDuration(latest.deepDuration)); awake=\(healthDuration(latest.awakeDuration)); awakenings=\(latest.awakenings)")
+        } else {
+            lines.append("- Sleep: no recent approved nightly records returned.")
+        }
+        if !recentNights.isEmpty {
+            let averageSleep = recentNights.reduce(0) { $0 + $1.asleepDuration } / Double(recentNights.count)
+            let averageDeep = recentNights.reduce(0) { $0 + $1.deepDuration } / Double(recentNights.count)
+            lines.append("- Last 7 recorded sleep days: nights=\(recentNights.count); average asleep=\(healthDuration(averageSleep)); average deep=\(healthDuration(averageDeep))")
+        }
+
+        if let mindfulness = summary.mindfulness {
+            lines.append("- Mindfulness: today=\(healthNumber(mindfulness.todayMinutes, digits: 0)) min; last 7 days=\(healthNumber(mindfulness.sevenDayMinutes, digits: 0)) min across \(mindfulness.sevenDaySessions) recorded sessions")
+        }
+        let recentWorkouts = summary.workouts.filter { HealthTimeRange.sevenDays.contains($0.startedAt) }
+        if !recentWorkouts.isEmpty {
+            let minutes = recentWorkouts.reduce(0) { $0 + $1.duration } / 60
+            lines.append("- Workouts in last 7 days: count=\(recentWorkouts.count); total duration=\(healthNumber(minutes, digits: 0)) min")
+        }
+    }
+
+    private func healthNumber(_ value: Double, digits: Int) -> String {
+        value.formatted(.number.precision(.fractionLength(digits)))
+    }
+
+    private func signedHealthPercent(_ value: Double) -> String {
+        (value > 0 ? "+" : "") + healthNumber(value, digits: 0) + "%"
+    }
+
+    private func healthDuration(_ seconds: TimeInterval) -> String {
+        let totalMinutes = max(0, Int((seconds / 60).rounded()))
+        return "\(totalMinutes / 60)h \(totalMinutes % 60)m"
     }
 }

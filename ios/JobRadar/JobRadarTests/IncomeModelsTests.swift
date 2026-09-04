@@ -1,5 +1,8 @@
 import Foundation
 import XCTest
+#if canImport(HealthKit)
+import HealthKit
+#endif
 @testable import JobRadar
 
 final class IncomeCalculatorTests: XCTestCase {
@@ -499,6 +502,328 @@ final class FinanceOverviewWireModelTests: XCTestCase {
         XCTAssertEqual(
             try JSONDecoder().decode(FinanceRecurringCadence.self, from: jsonString("semimonthly")),
             .irregular
+        )
+    }
+}
+
+final class FinanceSpendingAnalysisTests: XCTestCase {
+    func testDashboardGroupsOnlyPostedOutflowsInTheOverviewCurrency() {
+        let referenceDate = utcDate(year: 2026, month: 8, day: 27)
+        let overview = makeOverview(transactions: [
+            transaction(id: "food-1", date: "2026-08-10", category: "Food And Drink", amount: 80),
+            transaction(id: "food-2", date: "2026-08-15", category: "Food And Drink", amount: 20),
+            transaction(id: "travel", date: "2026-08-20", category: "Travel", amount: 50),
+            transaction(id: "pending", date: "2026-08-21", category: "Travel", amount: 999, pending: true),
+            transaction(id: "deposit", date: "2026-08-22", category: "Income", amount: 2_000, direction: .inflow),
+            transaction(id: "eur", date: "2026-08-23", category: "Travel", amount: 500, currencyCode: "EUR"),
+            transaction(id: "old", date: "2026-07-31", category: "Other", amount: 100)
+        ])
+
+        let result = FinanceSpendingAnalysis.make(
+            overview: overview,
+            period: .thisMonth,
+            relativeTo: referenceDate,
+            calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.totalSpent, 150, accuracy: 0.001)
+        XCTAssertEqual(result.transactionCount, 3)
+        XCTAssertEqual(result.categories.map(\.name), ["Food And Drink", "Travel"])
+        XCTAssertEqual(result.categories[0].amount, 100, accuracy: 0.001)
+        XCTAssertEqual(result.categories[0].share, 2.0 / 3.0, accuracy: 0.001)
+        XCTAssertEqual(result.categories[0].transactionCount, 2)
+        XCTAssertEqual(result.averageTransaction, 50, accuracy: 0.001)
+        XCTAssertEqual(result.largestTransaction?.id, "food-1")
+    }
+
+    func testCurrentMonthCanUseBackendBreakdownBeforeTransactionsArrive() {
+        var overview = makeOverview(transactions: [])
+        overview.monthlyOutflow = 400
+        overview.spendingByCategory = [
+            FinanceSpendingCategory(
+                id: "rent-and-utilities",
+                name: "Rent And Utilities",
+                amount: 300,
+                share: 0.75
+            ),
+            FinanceSpendingCategory(
+                id: "food-and-drink",
+                name: "Food And Drink",
+                amount: 100,
+                share: 0.25
+            )
+        ]
+
+        let result = FinanceSpendingAnalysis.make(
+            overview: overview,
+            period: .thisMonth,
+            relativeTo: utcDate(year: 2026, month: 8, day: 27),
+            calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.totalSpent, 400, accuracy: 0.001)
+        XCTAssertEqual(result.transactionCount, 0)
+        XCTAssertEqual(result.topCategory?.name, "Rent And Utilities")
+        XCTAssertEqual(result.topCategory?.share ?? 0, 0.75, accuracy: 0.001)
+    }
+
+    func testCardPaymentStaysInActivityButDoesNotDoubleCountTheCardPurchase() {
+        let referenceDate = utcDate(year: 2026, month: 8, day: 27)
+        let purchase = transaction(
+            id: "amazon",
+            date: "2026-08-10",
+            category: "General Merchandise",
+            amount: 120,
+            name: "Amazon"
+        )
+        let payment = transaction(
+            id: "amex-payment",
+            date: "2026-08-20",
+            category: "Loan Payments",
+            amount: 120,
+            name: "AMEX EPAYMENT"
+        )
+        let overview = makeOverview(transactions: [purchase, payment])
+
+        let result = FinanceSpendingAnalysis.make(
+            overview: overview,
+            period: .thisMonth,
+            relativeTo: referenceDate,
+            calendar: utcCalendar
+        )
+
+        XCTAssertEqual(overview.recentTransactions.count, 2)
+        XCTAssertEqual(payment.resolvedNature, .creditCardPayment)
+        XCTAssertEqual(payment.displayCategory, "Credit Card Payment")
+        XCTAssertFalse(payment.countsAsSpending)
+        XCTAssertEqual(result.totalSpent, 120, accuracy: 0.001)
+        XCTAssertEqual(result.transactions.map(\.id), [purchase.id])
+        XCTAssertEqual(result.categories.map(\.name), ["Shopping"])
+    }
+
+    func testLegacyBackendBreakdownCanonicalizesShoppingAndDropsCardSettlement() {
+        var overview = makeOverview(transactions: [])
+        overview.monthlyOutflow = 320
+        overview.spendingByCategory = [
+            FinanceSpendingCategory(
+                id: "general-merchandise",
+                name: "General Merchandise",
+                amount: 120,
+                share: 0.375
+            ),
+            FinanceSpendingCategory(
+                id: "loan-payments",
+                name: "Loan Payments",
+                amount: 200,
+                share: 0.625
+            )
+        ]
+
+        let result = FinanceSpendingAnalysis.make(
+            overview: overview,
+            period: .thisMonth,
+            relativeTo: utcDate(year: 2026, month: 8, day: 27),
+            calendar: utcCalendar
+        )
+
+        XCTAssertEqual(result.totalSpent, 120, accuracy: 0.001)
+        XCTAssertEqual(result.categories.map(\.name), ["Shopping"])
+        XCTAssertEqual(result.categories.first?.share ?? 0, 1, accuracy: 0.001)
+    }
+
+    func testLegacyRecurringCardBillIsNotTreatedAsAnotherSubscription() {
+        var overview = makeOverview(transactions: [])
+        overview.recurringPayments = [
+            FinanceRecurringPayment(
+                id: "amex-payment",
+                name: "AMEX EPAYMENT",
+                category: "Loan Payments",
+                amount: 500,
+                monthlyAmount: 500,
+                currencyCode: "USD",
+                cadence: .monthly,
+                lastChargeDate: "2026-08-20",
+                nextExpectedDate: "2026-09-20",
+                occurrences: 4,
+                chargesLast12Months: 4,
+                spentLast12Months: 2_000,
+                isVariable: true,
+                confidence: 0.9
+            )
+        ]
+        overview.monthlyRecurringTotal = 500
+
+        XCTAssertTrue(overview.detectedRecurringPayments.isEmpty)
+        XCTAssertEqual(overview.detectedMonthlyRecurringTotal, 0, accuracy: 0.001)
+    }
+
+    func testVagueRestaurantChargeStaysInFoodAndDrink() {
+        let value = transaction(
+            id: "dinner",
+            date: "2026-08-20",
+            category: "Other",
+            amount: 42,
+            name: "DOORDASH *LOCAL RESTAURANT"
+        )
+
+        XCTAssertEqual(value.displayCategory, "Food And Drink")
+    }
+
+    func testAIMerchantCategoryIsRememberedAndReapplied() {
+        let value = transaction(
+            id: "mystery",
+            date: "2026-08-20",
+            category: "Other",
+            amount: 28,
+            name: "MYSTERY BOOK CLUB"
+        )
+        let key = FinanceCategoryName.merchantKey(for: value)
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: key,
+                category: .education,
+                confidence: 0.88,
+                reason: "The merchant appears to be a book service.",
+                source: .ai,
+                learnedAt: .now
+            )
+        ])
+
+        let categorized = memory.applying(to: makeOverview(transactions: [value]))
+
+        XCTAssertEqual(categorized.recentTransactions.first?.category, "Education")
+        XCTAssertEqual(categorized.recentTransactions.first?.categorySource, .ai)
+        XCTAssertTrue(memory.unclassifiedSamples(in: categorized).isEmpty)
+    }
+
+    func testAILearnedSubscriptionBecomesAReviewSuggestion() {
+        let value = transaction(
+            id: "digital-plan",
+            date: "2026-08-22",
+            category: "Other",
+            amount: 12,
+            name: "MYSTERY DIGITAL SERVICE"
+        )
+        let key = FinanceCategoryName.merchantKey(for: value)
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: key,
+                category: .subscriptions,
+                confidence: 0.84,
+                reason: "The descriptor identifies a digital service plan.",
+                source: .ai,
+                learnedAt: .now
+            )
+        ])
+
+        let categorized = memory.applying(to: makeOverview(transactions: [value]))
+
+        XCTAssertEqual(categorized.possibleSubscriptions.count, 1)
+        XCTAssertEqual(categorized.possibleSubscriptions.first?.category, "Subscriptions")
+        XCTAssertEqual(categorized.detectedMonthlyRecurringTotal, 0, accuracy: 0.001)
+    }
+
+    func testNewOpenAIAndPlayStationChargesAppearAsUncountedSuggestions() {
+        let overview = makeOverview(transactions: [
+            transaction(
+                id: "openai",
+                date: "2026-08-20",
+                category: "Other",
+                amount: 20,
+                name: "OPENAI *CHATGPT SUBSCRIPTION"
+            ),
+            transaction(
+                id: "playstation",
+                date: "2026-08-21",
+                category: "Entertainment",
+                amount: 17.99,
+                name: "PLAYSTATION NETWORK"
+            )
+        ])
+
+        XCTAssertEqual(Set(overview.possibleSubscriptions.map(\.name)), ["OpenAI", "PlayStation"])
+        XCTAssertTrue(overview.confirmedRecurringPayments.isEmpty)
+        XCTAssertEqual(overview.detectedMonthlyRecurringTotal, 0, accuracy: 0.001)
+    }
+
+    func testKnownSubscriptionConfirmsAfterTwoMonthlyCharges() {
+        let overview = makeOverview(transactions: [
+            transaction(
+                id: "openai-july",
+                date: "2026-07-20",
+                category: "Other",
+                amount: 20,
+                name: "OPENAI CHATGPT PLUS"
+            ),
+            transaction(
+                id: "openai-august",
+                date: "2026-08-20",
+                category: "Other",
+                amount: 20,
+                name: "OPENAI *CHATGPT SUBSCRIPTION 8392"
+            )
+        ])
+
+        XCTAssertEqual(overview.confirmedRecurringPayments.count, 1)
+        XCTAssertEqual(overview.confirmedRecurringPayments.first?.name, "OpenAI")
+        XCTAssertEqual(overview.confirmedRecurringPayments.first?.cadence, .monthly)
+        XCTAssertEqual(overview.detectedMonthlyRecurringTotal, 20, accuracy: 0.001)
+    }
+
+    private var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
+    }
+
+    private func utcDate(year: Int, month: Int, day: Int) -> Date {
+        utcCalendar.date(from: DateComponents(year: year, month: month, day: day))!
+    }
+
+    private func transaction(
+        id: String,
+        date: String,
+        category: String,
+        amount: Double,
+        direction: FinanceTransactionDirection = .outflow,
+        pending: Bool = false,
+        currencyCode: String = "USD",
+        name: String? = nil,
+        merchantName: String? = nil,
+        nature: FinanceTransactionNature? = nil
+    ) -> FinanceTransaction {
+        FinanceTransaction(
+            id: id,
+            accountID: "checking",
+            date: date,
+            name: name ?? id,
+            merchantName: merchantName,
+            category: category,
+            amount: amount,
+            direction: direction,
+            nature: nature,
+            pending: pending,
+            currencyCode: currencyCode
+        )
+    }
+
+    private func makeOverview(transactions: [FinanceTransaction]) -> FinanceOverview {
+        FinanceOverview(
+            institutions: [],
+            accounts: [],
+            recentTransactions: transactions,
+            monthlyInflow: 0,
+            monthlyOutflow: 0,
+            totalCash: 0,
+            totalCreditBalance: 0,
+            totalInvestments: 0,
+            recurringPayments: nil,
+            monthlyRecurringTotal: nil,
+            spendingByCategory: nil,
+            currencyCode: "USD",
+            lastUpdatedAt: nil
         )
     }
 }
@@ -1392,6 +1717,212 @@ final class WatchTaskSyncProtocolTests: XCTestCase {
             WatchTaskSyncProtocol.completedTaskIDKey: id.uuidString,
             WatchTaskSyncProtocol.completedValueKey: false
         ]))
+    }
+}
+
+final class HealthAnalyticsTests: XCTestCase {
+    private var calendar: Calendar {
+        var value = Calendar(identifier: .gregorian)
+        value.timeZone = TimeZone(secondsFromGMT: 0)!
+        return value
+    }
+
+    private var now: Date {
+        calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 8,
+            day: 28,
+            hour: 12
+        ))!
+    }
+
+    func testBodyLoadCollectsUntilTwoCoreSignalsHaveBaselineCoverage() {
+        let summary = HealthSummary(
+            metrics: [],
+            isConnected: true,
+            metricSeries: [series(.heartRateVariability, baseline: 65, current: 48)]
+        )
+
+        let estimate = summary.analytics(relativeTo: now, calendar: calendar).bodyLoad
+
+        XCTAssertEqual(estimate.level, .collecting)
+        XCTAssertNil(estimate.index)
+        XCTAssertNil(estimate.confidence)
+    }
+
+    func testBodyLoadIsHigherWhenCoreSignalsMoveAbovePersonalVariation() throws {
+        let summary = HealthSummary(
+            metrics: [],
+            isConnected: true,
+            metricSeries: [
+                series(.heartRateVariability, baseline: 68, current: 43),
+                series(.restingHeartRate, baseline: 51, current: 68),
+                series(.respiratoryRate, baseline: 13.5, current: 17.2)
+            ]
+        )
+
+        let estimate = summary.analytics(relativeTo: now, calendar: calendar).bodyLoad
+
+        XCTAssertEqual(estimate.level, .higherThanUsual)
+        XCTAssertGreaterThan(try XCTUnwrap(estimate.index), 58)
+        XCTAssertEqual(estimate.factors.count, 3)
+        XCTAssertTrue(estimate.factors.allSatisfy { $0.state == .addsLoad })
+    }
+
+    func testBodyLoadStaysNearBaselineForTypicalCoreSignals() throws {
+        let summary = HealthSummary(
+            metrics: [],
+            isConnected: true,
+            metricSeries: [
+                series(.heartRateVariability, baseline: 62, current: 62),
+                series(.restingHeartRate, baseline: 53, current: 53),
+                series(.respiratoryRate, baseline: 14, current: 14)
+            ]
+        )
+
+        let estimate = summary.analytics(relativeTo: now, calendar: calendar).bodyLoad
+
+        XCTAssertEqual(estimate.level, .typical)
+        XCTAssertEqual(try XCTUnwrap(estimate.index), 50)
+        XCTAssertTrue(estimate.factors.allSatisfy { $0.state == .nearBaseline })
+    }
+
+    func testBodyLoadDoesNotCountYesterdayCurrentSampleInItsOwnBaseline() throws {
+        let today = calendar.startOfDay(for: now)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        let older = (-8 ... -2).map { offset in
+            HealthTrendPoint(
+                date: calendar.date(byAdding: .day, value: offset, to: today)!,
+                value: 60
+            )
+        }
+        let current = HealthTrendPoint(date: yesterday, value: 35)
+        let hrv = HealthMetricSeries(metric: .heartRateVariability, points: older + [current])
+        let resting = HealthMetricSeries(metric: .restingHeartRate, points: older.map {
+            HealthTrendPoint(date: $0.date, value: 52)
+        } + [HealthTrendPoint(date: yesterday, value: 67)])
+        let summary = HealthSummary(metrics: [], isConnected: true, metricSeries: [hrv, resting])
+
+        let estimate = summary.analytics(relativeTo: now, calendar: calendar).bodyLoad
+
+        XCTAssertEqual(try XCTUnwrap(estimate.factors.first { $0.id == "hrv" }).baselineDays, 7)
+        XCTAssertEqual(try XCTUnwrap(estimate.factors.first { $0.id == "resting-heart" }).baselineDays, 7)
+    }
+
+    func testOverallTrendUsesTwoCompletedWeeksAndIgnoresPartialToday() throws {
+        let today = calendar.startOfDay(for: now)
+        let previous = (-14 ... -8).map {
+            HealthTrendPoint(date: calendar.date(byAdding: .day, value: $0, to: today)!, value: 5_000)
+        }
+        let recent = (-7 ... -1).map {
+            HealthTrendPoint(date: calendar.date(byAdding: .day, value: $0, to: today)!, value: 7_500)
+        }
+        let partialToday = HealthTrendPoint(date: now, value: 10)
+        let summary = HealthSummary(
+            metrics: [],
+            isConnected: true,
+            stepTrend: previous + recent + [partialToday]
+        )
+
+        let trend = summary.analytics(relativeTo: now, calendar: calendar).overallTrend
+        let steps = try XCTUnwrap(trend.comparisons.first { $0.title == "Steps" })
+
+        XCTAssertEqual(trend.direction, .upward)
+        XCTAssertEqual(steps.currentAverage, 7_500, accuracy: 0.001)
+        XCTAssertEqual(steps.previousAverage, 5_000, accuracy: 0.001)
+        XCTAssertEqual(steps.percentChange, 50, accuracy: 0.001)
+    }
+
+    func testSleepEfficiencyRequiresValidInBedCoverage() throws {
+        let valid = sleepNight(asleep: 7 * 3_600, inBed: 8 * 3_600)
+        let missing = sleepNight(asleep: 7 * 3_600, inBed: nil)
+        let impossible = sleepNight(asleep: 8 * 3_600, inBed: 7 * 3_600)
+
+        XCTAssertEqual(try XCTUnwrap(valid.efficiency), 87.5, accuracy: 0.001)
+        XCTAssertNil(missing.efficiency)
+        XCTAssertNil(impossible.efficiency)
+    }
+
+    func testMetricSeriesRangeFilteringIsBoundedAndSorted() {
+        let today = calendar.startOfDay(for: now)
+        let series = HealthMetricSeries(metric: .heartRate, points: [
+            HealthTrendPoint(date: now, value: 61),
+            HealthTrendPoint(date: calendar.date(byAdding: .day, value: -8, to: today)!, value: 64),
+            HealthTrendPoint(date: calendar.date(byAdding: .day, value: -2, to: today)!, value: 62)
+        ])
+
+        let todayPoints = series.points(for: .today, relativeTo: now, calendar: calendar)
+        let weekPoints = series.points(for: .sevenDays, relativeTo: now, calendar: calendar)
+
+        XCTAssertEqual(todayPoints.map(\.value), [61])
+        XCTAssertEqual(weekPoints.map(\.value), [62, 61])
+    }
+
+    func testHealthPreviewFixtureExercisesTrendsLoadAndSleepDeepDive() {
+        let analytics = MockData.health.analytics()
+
+        XCTAssertFalse(MockData.health.metricSeries.isEmpty)
+        XCTAssertEqual(MockData.health.sleepHistory.count, 29)
+        XCTAssertTrue(analytics.bodyLoad.isAvailable)
+        XCTAssertTrue(analytics.overallTrend.hasComparison)
+        XCTAssertFalse(MockData.health.sleepHistory.last?.stageSegments.isEmpty ?? true)
+    }
+
+#if canImport(HealthKit)
+    func testActivitySummaryComponentsCarryRequiredCalendarAndTimeZone() {
+        let components = HealthKitProvider.activitySummaryDayComponents(
+            for: now,
+            timeZone: calendar.timeZone
+        )
+
+        XCTAssertNotNil(components.calendar)
+        XCTAssertEqual(components.timeZone, calendar.timeZone)
+        XCTAssertEqual(components.year, 2026)
+        XCTAssertEqual(components.month, 8)
+        XCTAssertEqual(components.day, 28)
+        _ = HKQuery.predicate(
+            forActivitySummariesBetweenStart: components,
+            end: components
+        )
+    }
+#endif
+
+    private func series(
+        _ metric: HealthTrendMetric,
+        baseline: Double,
+        current: Double
+    ) -> HealthMetricSeries {
+        let today = calendar.startOfDay(for: now)
+        let baselinePoints = (-10 ... -1).map { offset in
+            HealthTrendPoint(
+                date: calendar.date(byAdding: .day, value: offset, to: today)!,
+                value: baseline + Double(offset % 3) * 0.1
+            )
+        }
+        return HealthMetricSeries(
+            metric: metric,
+            points: baselinePoints + [HealthTrendPoint(date: now, value: current)]
+        )
+    }
+
+    private func sleepNight(asleep: TimeInterval, inBed: TimeInterval?) -> HealthSleepNight {
+        let start = now.addingTimeInterval(-(inBed ?? asleep))
+        return HealthSleepNight(
+            sleepDay: calendar.startOfDay(for: now),
+            startDate: start,
+            endDate: now,
+            asleepDuration: asleep,
+            inBedDuration: inBed,
+            awakeDuration: max(0, (inBed ?? asleep) - asleep),
+            remDuration: asleep * 0.2,
+            coreDuration: asleep * 0.65,
+            deepDuration: asleep * 0.15,
+            unspecifiedDuration: 0,
+            awakenings: 0,
+            stageSegments: []
+        )
     }
 }
 

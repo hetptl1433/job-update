@@ -1,4 +1,5 @@
 import AuthenticationServices
+import Charts
 import SwiftUI
 
 /// One-glance money view for every institution the user explicitly connects.
@@ -14,6 +15,8 @@ struct FinanceView: View {
     @State private var errorMessage: String?
     @State private var institutionToDisconnect: FinanceInstitution?
     @State private var authenticationSession: HostedLinkAuthenticationSession?
+    @State private var spendingPeriod: FinanceSpendingPeriod = .thisMonth
+    @State private var selectedSpendingCategoryID: String?
 
     var body: some View {
         NavigationStack(path: $app.financePath) {
@@ -49,6 +52,9 @@ struct FinanceView: View {
                       authenticationSession == nil,
                       finance.hasPendingHostedLink else { return }
                 Task { await finance.resumeHostedLinkIfNeeded() }
+            }
+            .onChange(of: app.connections.aiConnected) { _, connected in
+                if connected { finance.organizeUnknownTransactions() }
             }
             .onChange(of: finance.hostedLinkNotice) { _, notice in
                 guard let notice else { return }
@@ -154,15 +160,27 @@ struct FinanceView: View {
     }
 
     private func overviewContent(_ overview: FinanceOverview) -> some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+        let spending = FinanceSpendingAnalysis.make(
+            overview: overview,
+            period: spendingPeriod
+        )
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
             refreshStatus
+            financialPositionCard(overview)
             summaryGrid(overview)
-            incomeDestination
             cashFlowCard(overview)
+            FinanceSmartInsightCard(
+                overview: overview,
+                spending: spending,
+                isOrganizing: finance.isSmartCategorizing,
+                learnedMerchantCount: finance.learnedMerchantCategoryCount,
+                categorizationMessage: finance.smartCategorizationMessage
+            )
+            spendingSection(overview, analysis: spending)
             recurringPaymentsSection(overview)
-            spendingSection(overview)
-            accountsSection(overview)
+            incomeDestination
             transactionsSection(overview)
+            accountsSection(overview)
             institutionsSection(overview)
             privacyCard
         }
@@ -266,32 +284,24 @@ struct FinanceView: View {
         }
     }
 
+    private func financialPositionCard(_ overview: FinanceOverview) -> some View {
+        FinancePositionCard(overview: overview)
+    }
+
     private func summaryGrid(_ overview: FinanceOverview) -> some View {
         LazyVGrid(
             columns: [GridItem(.flexible()), GridItem(.flexible())],
             spacing: AppTheme.Spacing.md
         ) {
             FinanceMetricCard(
-                title: "Cash",
-                value: money(overview.totalCash, code: overview.currencyCode),
-                systemImage: "banknote",
-                tint: AppTheme.success
-            )
-            FinanceMetricCard(
-                title: "Cards owed",
-                value: money(overview.totalCreditBalance, code: overview.currencyCode),
-                systemImage: "creditcard",
-                tint: AppTheme.coral
-            )
-            FinanceMetricCard(
                 title: "This month in",
-                value: money(overview.monthlyInflow, code: overview.currencyCode),
+                value: money(overview.adjustedMonthlyInflow, code: overview.currencyCode),
                 systemImage: "arrow.down.left",
                 tint: AppTheme.success
             )
             FinanceMetricCard(
-                title: "This month out",
-                value: money(overview.monthlyOutflow, code: overview.currencyCode),
+                title: "This month spent",
+                value: money(overview.adjustedMonthlyOutflow, code: overview.currencyCode),
                 systemImage: "arrow.up.right",
                 tint: AppTheme.coral
             )
@@ -299,12 +309,12 @@ struct FinanceView: View {
     }
 
     private func cashFlowCard(_ overview: FinanceOverview) -> some View {
-        let total = max(overview.monthlyInflow + overview.monthlyOutflow, 1)
-        let inflowShare = overview.monthlyInflow / total
+        let total = max(overview.adjustedMonthlyInflow + overview.adjustedMonthlyOutflow, 1)
+        let inflowShare = overview.adjustedMonthlyInflow / total
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("MONTHLY CASH FLOW").sectionLabel()
+                    Text("MONTHLY IN VS SPENT").sectionLabel()
                     Text(money(overview.monthlyNetFlow, code: overview.currencyCode))
                         .font(.title2.weight(.bold))
                         .foregroundStyle(overview.monthlyNetFlow >= 0 ? AppTheme.success : AppTheme.coral)
@@ -324,9 +334,9 @@ struct FinanceView: View {
             }
             .frame(height: 7)
             HStack {
-                Label("Inflow", systemImage: "circle.fill").foregroundStyle(AppTheme.success)
+                Label("In", systemImage: "circle.fill").foregroundStyle(AppTheme.success)
                 Spacer()
-                Label("Outflow", systemImage: "circle.fill").foregroundStyle(AppTheme.coral)
+                Label("Spent", systemImage: "circle.fill").foregroundStyle(AppTheme.coral)
             }
             .font(.caption2)
         }
@@ -335,6 +345,8 @@ struct FinanceView: View {
 
     private func recurringPaymentsSection(_ overview: FinanceOverview) -> some View {
         let payments = overview.detectedRecurringPayments
+        let confirmedCount = overview.confirmedRecurringPayments.count
+        let possibleCount = overview.possibleSubscriptions.count
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             SectionHeader(
                 title: "Recurring payments",
@@ -352,7 +364,7 @@ struct FinanceView: View {
                         Text("No recurring charges detected yet")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AppTheme.primaryText)
-                        Text("Orbit looks for consistent posted charges over time. New connections may need a few transaction cycles.")
+                        Text("Orbit combines posted-charge patterns with merchant knowledge. New possibilities appear for review before they affect totals.")
                             .font(.caption)
                             .foregroundStyle(AppTheme.secondaryText)
                     }
@@ -362,13 +374,13 @@ struct FinanceView: View {
                 VStack(spacing: 0) {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("ESTIMATED EACH MONTH").sectionLabel()
+                            Text("CONFIRMED EACH MONTH").sectionLabel()
                             Text(money(overview.detectedMonthlyRecurringTotal, code: overview.currencyCode))
                                 .font(.title2.weight(.bold))
                                 .foregroundStyle(AppTheme.primaryText)
                         }
                         Spacer()
-                        Text("\(payments.count) active")
+                        Text(recurringCountLabel(confirmed: confirmedCount, possible: possibleCount))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(AppTheme.secondaryText)
                     }
@@ -388,44 +400,29 @@ struct FinanceView: View {
         }
     }
 
-    @ViewBuilder
-    private func spendingSection(_ overview: FinanceOverview) -> some View {
-        if !overview.topSpendingCategories.isEmpty {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                SectionHeader(title: "Spending this month")
-                VStack(spacing: AppTheme.Spacing.lg) {
-                    ForEach(overview.topSpendingCategories) { category in
-                        VStack(spacing: AppTheme.Spacing.sm) {
-                            HStack {
-                                Text(category.name)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(AppTheme.primaryText)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(money(category.amount, code: overview.currencyCode))
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(AppTheme.primaryText)
-                                    .monospacedDigit()
-                            }
-                            GeometryReader { geometry in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(AppTheme.secondarySurface)
-                                    Capsule()
-                                        .fill(AppTheme.brandSecondary)
-                                        .frame(
-                                            width: max(
-                                                4,
-                                                geometry.size.width * CGFloat(min(max(category.share, 0), 1))
-                                            )
-                                        )
-                                }
-                            }
-                            .frame(height: 6)
-                        }
-                    }
+    private func recurringCountLabel(confirmed: Int, possible: Int) -> String {
+        if possible == 0 { return "\(confirmed) active" }
+        if confirmed == 0 { return "\(possible) to review" }
+        return "\(confirmed) active · \(possible) review"
+    }
+
+    private func spendingSection(
+        _ overview: FinanceOverview,
+        analysis: FinanceSpendingAnalysis
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(
+                title: "Spending breakdown",
+                actionTitle: overview.recentTransactions.isEmpty ? nil : "See all",
+                action: overview.recentTransactions.isEmpty ? nil : {
+                    app.financePath.append(.transactions)
                 }
-                .cardSurface()
-            }
+            )
+            FinanceSpendingDashboardCard(
+                analysis: analysis,
+                selectedCategoryID: $selectedSpendingCategoryID,
+                period: $spendingPeriod
+            )
         }
     }
 
@@ -671,6 +668,679 @@ private struct FinanceMetricCard: View {
     }
 }
 
+private struct FinancePositionCard: View {
+    var overview: FinanceOverview
+
+    private var totalPosition: Double {
+        overview.totalCash + overview.totalInvestments - overview.totalCreditBalance
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("TOTAL POSITION")
+                        .font(.caption.weight(.semibold))
+                        .tracking(0.7)
+                        .foregroundStyle(AppTheme.secondaryText)
+                    Text(money(totalPosition))
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                        .foregroundStyle(AppTheme.primaryText)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Text("Cash and investments minus card balances")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Spacer(minLength: AppTheme.Spacing.sm)
+                Label("Live", systemImage: "circle.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AppTheme.success)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(AppTheme.success.opacity(0.1), in: Capsule())
+                    .overlay(Capsule().strokeBorder(AppTheme.success.opacity(0.2), lineWidth: 1))
+            }
+
+            HStack(spacing: 0) {
+                FinancePositionValue(
+                    title: "Cash",
+                    value: money(overview.totalCash)
+                )
+                positionDivider
+                FinancePositionValue(
+                    title: "Invested",
+                    value: money(overview.totalInvestments)
+                )
+                positionDivider
+                FinancePositionValue(
+                    title: "Cards",
+                    value: money(overview.totalCreditBalance)
+                )
+            }
+        }
+        .padding(AppTheme.Spacing.xl)
+        .background(
+            LinearGradient(
+                colors: [AppTheme.elevatedSurface, AppTheme.primarySurface],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                .strokeBorder(AppTheme.border, lineWidth: 1)
+        }
+        .overlay(alignment: .topLeading) {
+            Capsule()
+                .fill(AppTheme.brandGradient)
+                .frame(width: 64, height: 3)
+                .padding(.leading, AppTheme.Spacing.xl)
+        }
+        .shadow(
+            color: AppTheme.Shadow.cardColor,
+            radius: AppTheme.Shadow.cardRadius,
+            x: 0,
+            y: AppTheme.Shadow.cardY
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Total position (money(totalPosition)). Cash (money(overview.totalCash)), "
+                + "investments (money(overview.totalInvestments)), cards owed (money(overview.totalCreditBalance))."
+        )
+    }
+
+    private var positionDivider: some View {
+        Rectangle()
+            .fill(AppTheme.separator)
+            .frame(width: 1, height: 34)
+            .padding(.horizontal, AppTheme.Spacing.md)
+    }
+
+    private func money(_ amount: Double) -> String {
+        FinanceDashboardFormat.money(amount, code: overview.currencyCode)
+    }
+}
+
+private struct FinancePositionValue: View {
+    var title: String
+    var value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.secondaryText)
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AppTheme.primaryText)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct FinanceSmartInsightCard: View {
+    var overview: FinanceOverview
+    var spending: FinanceSpendingAnalysis
+    var isOrganizing = false
+    var learnedMerchantCount = 0
+    var categorizationMessage: String? = nil
+
+    private var recurringShare: Double {
+        guard spending.period == .thisMonth, spending.totalSpent > 0 else { return 0 }
+        return min(overview.detectedMonthlyRecurringTotal / spending.totalSpent, 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Image(systemName: "sparkles")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppTheme.onAccent)
+                    .frame(width: 28, height: 28)
+                    .background(AppTheme.accent, in: Circle())
+                Text("ORBIT INTELLIGENCE")
+                    .sectionLabel()
+                Spacer()
+                Text(intelligenceStatus)
+                    .font(.caption2.weight(.semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(AppTheme.secondarySurface, in: Capsule())
+            }
+
+            if let topCategory = spending.topCategory {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(FinanceCategoryVisuals.displayName(for: topCategory.name)) leads your spending")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(AppTheme.primaryText)
+                    Text(insightDescription(topCategory))
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    FinanceInsightMetric(
+                        title: "Recurring / mo",
+                        value: money(overview.detectedMonthlyRecurringTotal),
+                        systemImage: "repeat",
+                        tint: AppTheme.purple
+                    )
+                    FinanceInsightMetric(
+                        title: "Average purchase",
+                        value: spending.transactionCount > 0 ? money(spending.averageTransaction) : "—",
+                        systemImage: "divide",
+                        tint: AppTheme.info
+                    )
+                    FinanceInsightMetric(
+                        title: "Largest purchase",
+                        value: spending.largestTransaction.map { money($0.amount) } ?? "—",
+                        systemImage: "arrow.up.right",
+                        tint: AppTheme.coral
+                    )
+                }
+
+                if spending.period == .thisMonth, recurringShare > 0 {
+                    Label(
+                        "Recurring charges are \(percent(recurringShare)) of this month's spending.",
+                        systemImage: "lightbulb"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Your smart snapshot is getting ready")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(AppTheme.primaryText)
+                    Text("Insights will appear as soon as posted transactions arrive for this period.")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+
+            Divider().overlay(AppTheme.separator)
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
+                if isOrganizing {
+                    HStack(spacing: AppTheme.Spacing.sm) {
+                        ProgressView().controlSize(.small)
+                        Text("AI is organizing new merchants; saved decisions will be reused.")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                } else if learnedMerchantCount > 0 {
+                    Label(
+                        "\(learnedMerchantCount) learned merchant categor\(learnedMerchantCount == 1 ? "y" : "ies") are reused automatically.",
+                        systemImage: "brain.head.profile"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                } else if let categorizationMessage {
+                    Label(categorizationMessage, systemImage: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Label(
+                    "Food & Drink stays separate. Card payments, transfers and pending charges are excluded.",
+                    systemImage: "checkmark.shield"
+                )
+                .font(.caption2)
+                .foregroundStyle(AppTheme.tertiaryText)
+            }
+        }
+        .cardSurface()
+    }
+
+    private var intelligenceStatus: String {
+        if isOrganizing { return "ORGANIZING" }
+        if learnedMerchantCount > 0 { return "\(learnedMerchantCount) LEARNED" }
+        return "AUTO-UPDATED"
+    }
+
+    private func insightDescription(_ category: FinanceSpendingBreakdown) -> String {
+        let amount = money(category.amount)
+        let share = percent(category.share)
+        if category.transactionCount > 0 {
+            let purchase = category.transactionCount == 1 ? "purchase" : "purchases"
+            return "It accounts for \(share) (\(amount)) across \(category.transactionCount) \(purchase) in \(spending.period.label.lowercased())."
+        }
+        return "It accounts for \(share) (\(amount)) of spending in \(spending.period.label.lowercased())."
+    }
+
+    private func money(_ amount: Double) -> String {
+        FinanceDashboardFormat.money(amount, code: spending.currencyCode)
+    }
+
+    private func percent(_ value: Double) -> String {
+        value.formatted(.percent.precision(.fractionLength(0)))
+    }
+}
+
+private struct FinanceInsightMetric: View {
+    var title: String
+    var value: String
+    var systemImage: String
+    var tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+            Text(value)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(AppTheme.primaryText)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(AppTheme.secondaryText)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
+        .padding(AppTheme.Spacing.md)
+        .background(
+            AppTheme.secondarySurface,
+            in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
+        )
+    }
+}
+
+private struct FinanceSpendingDashboardCard: View {
+    var analysis: FinanceSpendingAnalysis
+    @Binding var selectedCategoryID: String?
+    @Binding var period: FinanceSpendingPeriod
+
+    private var categories: [FinanceSpendingChartCategory] {
+        FinanceSpendingChartCategory.displayCategories(from: analysis.categories)
+    }
+
+    private var selectedCategory: FinanceSpendingChartCategory? {
+        guard let selectedCategoryID else { return nil }
+        return categories.first { $0.id == selectedCategoryID }
+    }
+
+    private var centerCategory: FinanceSpendingChartCategory? {
+        selectedCategory ?? categories.first
+    }
+
+    private var selectedTransactions: [FinanceTransaction] {
+        guard let selectedCategory else { return [] }
+        return analysis.transactions
+            .filter { selectedCategory.sourceNames.contains(categoryName(for: $0)) }
+            .sorted {
+                $0.amount > $1.amount || ($0.amount == $1.amount && $0.date > $1.date)
+            }
+            .prefix(3)
+            .map { $0 }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            Picker("Spending period", selection: $period) {
+                ForEach(FinanceSpendingPeriod.allCases) { option in
+                    Text(option.shortLabel).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: period) { _, _ in selectedCategoryID = nil }
+
+            if categories.isEmpty {
+                VStack(spacing: AppTheme.Spacing.md) {
+                    Image(systemName: "chart.pie")
+                        .font(.title2)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                    Text("No posted spending in \(period.label.lowercased())")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.primaryText)
+                    Text("Try another range or pull to refresh after new transactions post.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, AppTheme.Spacing.xl)
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("TOTAL SPENT").sectionLabel()
+                        Text(money(analysis.totalSpent))
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(AppTheme.primaryText)
+                            .monospacedDigit()
+                    }
+                    Spacer()
+                    Text(transactionCountLabel)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+
+                Chart(categories) { category in
+                    SectorMark(
+                        angle: .value("Spent", category.amount),
+                        innerRadius: .ratio(0.69),
+                        angularInset: 2
+                    )
+                    .cornerRadius(4)
+                    .foregroundStyle(category.color)
+                    .opacity(
+                        selectedCategory == nil || selectedCategory?.id == category.id
+                            ? 1
+                            : 0.24
+                    )
+                }
+                .chartLegend(.hidden)
+                .frame(height: 210)
+                .overlay {
+                    if let centerCategory {
+                        VStack(spacing: 2) {
+                            Text(percent(centerCategory.share))
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(AppTheme.primaryText)
+                                .monospacedDigit()
+                            Text(centerCategory.name)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(AppTheme.secondaryText)
+                                .lineLimit(1)
+                                .frame(maxWidth: 104)
+                        }
+                        .accessibilityHidden(true)
+                    }
+                }
+                .animation(.snappy(duration: 0.25), value: selectedCategoryID)
+                .accessibilityLabel("Spending category chart")
+                .accessibilityValue(
+                    categories.map { "\($0.name) \(percent($0.share))" }.joined(separator: ", ")
+                )
+
+                VStack(spacing: AppTheme.Spacing.xs) {
+                    ForEach(categories) { category in
+                        FinanceSpendingCategoryRow(
+                            category: category,
+                            currencyCode: analysis.currencyCode,
+                            isSelected: selectedCategoryID == category.id
+                        ) {
+                            withAnimation(.snappy(duration: 0.2)) {
+                                selectedCategoryID = selectedCategoryID == category.id
+                                    ? nil
+                                    : category.id
+                            }
+                        }
+                    }
+                }
+
+                if let selectedCategory, !selectedTransactions.isEmpty {
+                    Divider().overlay(AppTheme.separator)
+                    HStack {
+                        Text("LARGEST IN \(selectedCategory.name.uppercased())")
+                            .sectionLabel()
+                            .lineLimit(1)
+                        Spacer()
+                        Button("Clear") { selectedCategoryID = nil }
+                            .font(.caption.weight(.semibold))
+                    }
+
+                    VStack(spacing: 0) {
+                        ForEach(Array(selectedTransactions.enumerated()), id: \.element.id) { index, transaction in
+                            FinanceTransactionRow(transaction: transaction)
+                            if index < selectedTransactions.count - 1 {
+                                Divider().overlay(AppTheme.separator)
+                            }
+                        }
+                    }
+                    .background(
+                        AppTheme.secondarySurface.opacity(0.55),
+                        in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
+                    )
+                }
+            }
+        }
+        .cardSurface()
+    }
+
+    private var transactionCountLabel: String {
+        guard analysis.transactionCount > 0 else { return period.label }
+        let noun = analysis.transactionCount == 1 ? "purchase" : "purchases"
+        return "\(analysis.transactionCount) \(noun)"
+    }
+
+    private func categoryName(for transaction: FinanceTransaction) -> String {
+        transaction.displayCategory
+    }
+
+    private func money(_ amount: Double) -> String {
+        FinanceDashboardFormat.money(amount, code: analysis.currencyCode)
+    }
+
+    private func percent(_ value: Double) -> String {
+        value.formatted(.percent.precision(.fractionLength(0)))
+    }
+}
+
+private struct FinanceSpendingChartCategory: Identifiable {
+    var id: String
+    var name: String
+    var amount: Double
+    var share: Double
+    var transactionCount: Int
+    var sourceNames: Set<String>
+    var colorIndex: Int
+
+    var color: Color { FinanceCategoryVisuals.color(at: colorIndex) }
+
+    static func displayCategories(
+        from categories: [FinanceSpendingBreakdown]
+    ) -> [FinanceSpendingChartCategory] {
+        guard categories.count > 6 else {
+            return categories.enumerated().map { index, category in
+                FinanceSpendingChartCategory(
+                    id: category.id,
+                    name: FinanceCategoryVisuals.displayName(for: category.name),
+                    amount: category.amount,
+                    share: category.share,
+                    transactionCount: category.transactionCount,
+                    sourceNames: [category.name],
+                    colorIndex: index
+                )
+            }
+        }
+
+        let leading = categories.prefix(5).enumerated().map { index, category in
+            FinanceSpendingChartCategory(
+                id: category.id,
+                name: FinanceCategoryVisuals.displayName(for: category.name),
+                amount: category.amount,
+                share: category.share,
+                transactionCount: category.transactionCount,
+                sourceNames: [category.name],
+                colorIndex: index
+            )
+        }
+        let remaining = categories.dropFirst(5)
+        let other = FinanceSpendingChartCategory(
+            id: "dashboard-everything-else",
+            name: "Everything else",
+            amount: remaining.reduce(0) { $0 + $1.amount },
+            share: remaining.reduce(0) { $0 + $1.share },
+            transactionCount: remaining.reduce(0) { $0 + $1.transactionCount },
+            sourceNames: Set(remaining.map(\.name)),
+            colorIndex: 5
+        )
+        return leading + [other]
+    }
+}
+
+private struct FinanceSpendingCategoryRow: View {
+    var category: FinanceSpendingChartCategory
+    var currencyCode: String
+    var isSelected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: AppTheme.Spacing.sm) {
+                HStack(spacing: AppTheme.Spacing.md) {
+                    Image(systemName: FinanceCategoryVisuals.systemImage(for: category.name))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(category.color)
+                        .frame(width: 32, height: 32)
+                        .background(category.color.opacity(0.12), in: Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(category.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppTheme.primaryText)
+                            .lineLimit(1)
+                        Text(countLabel)
+                            .font(.caption2)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    Spacer(minLength: AppTheme.Spacing.sm)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(percent(category.share))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(AppTheme.primaryText)
+                            .monospacedDigit()
+                        Text(money(category.amount))
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .monospacedDigit()
+                    }
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSelected ? category.color : AppTheme.tertiaryText)
+                        .frame(width: 16)
+                }
+
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(AppTheme.separator)
+                        Capsule()
+                            .fill(category.color)
+                            .frame(
+                                width: max(
+                                    4,
+                                    geometry.size.width * CGFloat(min(max(category.share, 0), 1))
+                                )
+                            )
+                    }
+                }
+                .frame(height: 5)
+            }
+            .padding(AppTheme.Spacing.md)
+            .background(
+                isSelected ? AppTheme.secondarySurface : Color.clear,
+                in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(category.name)
+        .accessibilityValue("\(percent(category.share)), \(money(category.amount))")
+        .accessibilityHint(isSelected ? "Clears this category filter" : "Shows the largest purchases in this category")
+    }
+
+    private var countLabel: String {
+        guard category.transactionCount > 0 else { return "Posted spending" }
+        return "\(category.transactionCount) \(category.transactionCount == 1 ? "purchase" : "purchases")"
+    }
+
+    private func money(_ amount: Double) -> String {
+        FinanceDashboardFormat.money(amount, code: currencyCode)
+    }
+
+    private func percent(_ value: Double) -> String {
+        value.formatted(.percent.precision(.fractionLength(0)))
+    }
+}
+
+private enum FinanceCategoryVisuals {
+    private static let colors: [Color] = [
+        AppTheme.info,
+        AppTheme.purple,
+        AppTheme.coral,
+        AppTheme.warning,
+        AppTheme.success,
+        AppTheme.brandSecondary
+    ]
+
+    static func color(at index: Int) -> Color {
+        colors[index % colors.count]
+    }
+
+    static func displayName(for category: String) -> String {
+        let words = category.replacingOccurrences(of: "_", with: " ").split(separator: " ")
+        let lowercaseWords: Set<String> = ["and", "of", "the", "for"]
+        return words.enumerated().map { index, word in
+            let value = String(word)
+            if index > 0, lowercaseWords.contains(value.lowercased()) {
+                return value.lowercased()
+            }
+            if value == value.uppercased() {
+                return value.lowercased().capitalized
+            }
+            return value
+        }
+        .joined(separator: " ")
+    }
+
+    static func systemImage(for category: String) -> String {
+        let value = category.lowercased()
+        if value.contains("credit card") || value.contains("card payment") {
+            return "creditcard.fill"
+        }
+        if value.contains("food") || value.contains("dining") || value.contains("restaurant") {
+            return "fork.knife"
+        }
+        if value.contains("transport") || value.contains("gas") || value.contains("auto") {
+            return "car.fill"
+        }
+        if value.contains("rent") || value.contains("mortgage") || value.contains("home") {
+            return "house.fill"
+        }
+        if value.contains("entertainment") || value.contains("recreation") {
+            return "play.rectangle.fill"
+        }
+        if value.contains("subscription") {
+            return "arrow.triangle.2.circlepath"
+        }
+        if value.contains("travel") {
+            return "airplane"
+        }
+        if value.contains("medical") || value.contains("health") {
+            return "cross.case.fill"
+        }
+        if value.contains("shop") || value.contains("merchandise") {
+            return "bag.fill"
+        }
+        if value.contains("utility") || value.contains("bill") {
+            return "bolt.fill"
+        }
+        if value.contains("loan") || value.contains("bank") || value.contains("financial") {
+            return "building.columns.fill"
+        }
+        return "square.grid.2x2.fill"
+    }
+}
+
+private enum FinanceDashboardFormat {
+    static func money(_ amount: Double, code: String) -> String {
+        let roundedToCents = (amount * 100).rounded() / 100
+        let hasCents = abs(roundedToCents - roundedToCents.rounded()) >= 0.005
+        return roundedToCents.formatted(
+            .currency(code: code).precision(.fractionLength(hasCents ? 2 : 0))
+        )
+    }
+}
+
 private struct FinanceAccountRow: View {
     var account: FinanceAccount
     var showsDisclosure = false
@@ -818,7 +1488,7 @@ private struct FinanceTransactionsView: View {
             case .all:
                 true
             case .spending:
-                transaction.direction == .outflow
+                transaction.direction == .outflow && transaction.countsAsSpending
             case .income:
                 finance.incomeOverview != nil
                     && transaction.direction == .inflow
@@ -826,6 +1496,7 @@ private struct FinanceTransactionsView: View {
             case .otherDeposits:
                 finance.incomeOverview != nil
                     && transaction.direction == .inflow
+                    && !transaction.isPaymentOrTransfer
                     && !confirmedIncomeIDs.contains(transaction.id)
             }
         }
@@ -840,7 +1511,7 @@ private struct FinanceTransactionsView: View {
 
     private var postedSpent: Double {
         rangedTransactions
-            .filter { !$0.pending && $0.direction == .outflow }
+            .filter { !$0.pending && $0.direction == .outflow && $0.countsAsSpending }
             .reduce(0) { $0 + $1.amount }
     }
 
@@ -854,13 +1525,19 @@ private struct FinanceTransactionsView: View {
     private var otherDeposits: Double? {
         guard finance.incomeOverview != nil else { return nil }
         return rangedTransactions
-            .filter { !$0.pending && $0.direction == .inflow && !confirmedIncomeIDs.contains($0.id) }
+            .filter {
+                !$0.pending
+                    && $0.direction == .inflow
+                    && !$0.isPaymentOrTransfer
+                    && !confirmedIncomeIDs.contains($0.id)
+            }
             .reduce(0) { $0 + $1.amount }
     }
 
     private var topMerchants: [FinanceMerchantSpend] {
         var groups: [String: FinanceMerchantSpend] = [:]
-        for transaction in rangedTransactions where !transaction.pending && transaction.direction == .outflow {
+        for transaction in rangedTransactions
+        where !transaction.pending && transaction.direction == .outflow && transaction.countsAsSpending {
             let key = FinanceMerchantSpend.normalizedKey(transaction.displayName)
             guard !key.isEmpty else { continue }
             var merchant = groups[key] ?? FinanceMerchantSpend(
@@ -1083,12 +1760,13 @@ private struct FinanceTransactionsView: View {
     private func matchesSearch(_ transaction: FinanceTransaction) -> Bool {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return true }
-        return [transaction.displayName, transaction.name, transaction.category]
+        return [transaction.displayName, transaction.name, transaction.category, transaction.displayCategory]
             .compactMap { $0 }
             .contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
     private func badge(for transaction: FinanceTransaction) -> FinanceTransactionBadge? {
+        guard !transaction.isPaymentOrTransfer else { return nil }
         guard transaction.direction == .inflow, finance.incomeOverview != nil else { return nil }
         if confirmedIncomeIDs.contains(transaction.id) {
             return FinanceTransactionBadge(text: "Income", tint: AppTheme.success)
@@ -1477,26 +2155,60 @@ private struct FinanceTransactionRow: View {
     var transaction: FinanceTransaction
     var badge: FinanceTransactionBadge? = nil
 
+    private var displayedBadge: FinanceTransactionBadge? {
+        if let badge { return badge }
+        switch transaction.resolvedNature {
+        case .creditCardPayment:
+            return FinanceTransactionBadge(text: "Card payment", tint: AppTheme.info)
+        case .accountTransfer:
+            return FinanceTransactionBadge(text: "Transfer", tint: AppTheme.secondaryText)
+        case .loanPayment:
+            return FinanceTransactionBadge(text: "Debt payment", tint: AppTheme.warning)
+        case .refund:
+            return FinanceTransactionBadge(text: "Refund", tint: AppTheme.success)
+        case .purchase, .income, .other:
+            return nil
+        }
+    }
+
+    private var isNeutralMovement: Bool { transaction.isPaymentOrTransfer }
+
+    private var iconName: String {
+        if isNeutralMovement { return "arrow.left.arrow.right" }
+        return transaction.direction == .inflow ? "arrow.down.left" : "arrow.up.right"
+    }
+
+    private var directionTint: Color {
+        if isNeutralMovement { return AppTheme.secondaryText }
+        return transaction.direction == .inflow ? AppTheme.success : AppTheme.secondaryText
+    }
+
     var body: some View {
         HStack(spacing: AppTheme.Spacing.md) {
-            Image(systemName: transaction.direction == .inflow ? "arrow.down.left" : "arrow.up.right")
+            Image(systemName: iconName)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(transaction.direction == .inflow ? AppTheme.success : AppTheme.secondaryText)
+                .foregroundStyle(directionTint)
                 .frame(width: 32, height: 32)
                 .background(AppTheme.secondarySurface, in: Circle())
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(transaction.displayName).font(.subheadline.weight(.semibold)).lineLimit(1)
                     if transaction.pending { Tag(text: "Pending", tint: AppTheme.warning) }
-                    if let badge { Tag(text: badge.text, tint: badge.tint) }
+                    if let displayedBadge {
+                        Tag(text: displayedBadge.text, tint: displayedBadge.tint)
+                    }
                 }
-                Text([transaction.category, transaction.date].compactMap { $0 }.joined(separator: " · "))
+                Text([transaction.displayCategory, transaction.date].joined(separator: " · "))
                     .font(.caption).foregroundStyle(AppTheme.secondaryText).lineLimit(1)
             }
             Spacer(minLength: AppTheme.Spacing.sm)
             Text("\(transaction.direction == .inflow ? "+" : "−")\(transaction.amount.formatted(.currency(code: transaction.currencyCode).precision(.fractionLength(0...2))))")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(transaction.direction == .inflow ? AppTheme.success : AppTheme.primaryText)
+                .foregroundStyle(
+                    isNeutralMovement
+                        ? AppTheme.secondaryText
+                        : (transaction.direction == .inflow ? AppTheme.success : AppTheme.primaryText)
+                )
                 .monospacedDigit()
         }
         .padding(AppTheme.Spacing.lg)
@@ -1514,22 +2226,35 @@ private struct FinanceRecurringPaymentRow: View {
                 .frame(width: 34, height: 34)
                 .background(AppTheme.secondarySurface, in: Circle())
             VStack(alignment: .leading, spacing: 3) {
-                Text(payment.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                    .lineLimit(1)
-                HStack(spacing: 5) {
-                    Text(payment.cadence.label)
-                    if payment.isVariable { Text("· Variable") }
-                    if let nextExpectedDate = payment.nextExpectedDate {
-                        Text("· \(FinanceDateLabel.expected(nextExpectedDate))")
+                HStack(spacing: AppTheme.Spacing.xs) {
+                    Text(payment.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.primaryText)
+                        .lineLimit(1)
+                    if !payment.isConfirmed {
+                        Tag(text: "Review", tint: AppTheme.warning)
                     }
                 }
-                .font(.caption)
-                .foregroundStyle(AppTheme.secondaryText)
-                .lineLimit(1)
+                if payment.isConfirmed {
+                    HStack(spacing: 5) {
+                        Text(payment.cadence.label)
+                        if payment.isVariable { Text("· Variable") }
+                        if let nextExpectedDate = payment.nextExpectedDate {
+                            Text("· \(FinanceDateLabel.expected(nextExpectedDate))")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .lineLimit(1)
+                } else {
+                    Text("Possible subscription · not counted in monthly total")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(1)
+                }
                 if let spent = payment.spentLast12Months {
-                    Text("\(payment.chargesLast12Months ?? payment.occurrences) charges · \(money(spent)) in 12 months")
+                    let count = payment.chargesLast12Months ?? payment.occurrences
+                    Text("\(count) \(count == 1 ? "charge" : "charges") · \(money(spent)) in 12 months")
                         .font(.caption2)
                         .foregroundStyle(AppTheme.secondaryText)
                         .lineLimit(1)
@@ -1541,7 +2266,11 @@ private struct FinanceRecurringPaymentRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppTheme.primaryText)
                     .monospacedDigit()
-                if payment.cadence != .monthly {
+                if !payment.isConfirmed {
+                    Text("last charge")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
+                } else if payment.cadence != .monthly {
                     Text("\(money(payment.monthlyAmount))/mo")
                         .font(.caption2)
                         .foregroundStyle(AppTheme.secondaryText)
@@ -1553,6 +2282,7 @@ private struct FinanceRecurringPaymentRow: View {
 
     private var systemImage: String {
         let category = payment.category?.lowercased() ?? ""
+        if category.contains("subscription") { return "arrow.triangle.2.circlepath" }
         if category.contains("entertainment") { return "play.rectangle" }
         if category.contains("utilit") { return "bolt" }
         if category.contains("telecommunication") { return "antenna.radiowaves.left.and.right" }
@@ -1589,26 +2319,30 @@ private struct RecurringPaymentsView: View {
         switch finance.state {
         case .loaded(let overview):
             let payments = overview.detectedRecurringPayments
+            let confirmed = overview.confirmedRecurringPayments
+            let possible = overview.possibleSubscriptions
             if payments.isEmpty {
                 InfoStateView(
                     systemImage: "repeat",
                     title: "No recurring payments detected",
-                    message: "Orbit needs repeated posted charges before it can estimate a cadence. Pull to refresh after more activity arrives."
+                    message: "Orbit uses merchant knowledge and repeated posted charges. Pull to refresh after more activity arrives."
                 )
                 .cardSurface()
             } else {
-                recurringSummary(overview, payments: payments)
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    SectionHeader(title: "Expected payments")
-                    VStack(spacing: 0) {
-                        ForEach(Array(payments.enumerated()), id: \.element.id) { index, payment in
-                            FinanceRecurringPaymentRow(payment: payment)
-                            if index < payments.count - 1 {
-                                Divider().overlay(AppTheme.separator)
-                            }
-                        }
+                recurringSummary(overview, confirmed: confirmed, possible: possible)
+                if !confirmed.isEmpty {
+                    paymentList(title: "Expected payments", payments: confirmed)
+                }
+                if !possible.isEmpty {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                        paymentList(title: "Subscriptions to review", payments: possible)
+                        Label(
+                            "These match a subscription merchant, but Orbit needs more posting history before counting them as monthly commitments.",
+                            systemImage: "info.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
                     }
-                    .cardSurface(padding: 0)
                 }
                 detectionNote
             }
@@ -1637,11 +2371,14 @@ private struct RecurringPaymentsView: View {
 
     private func recurringSummary(
         _ overview: FinanceOverview,
-        payments: [FinanceRecurringPayment]
+        confirmed: [FinanceRecurringPayment],
+        possible: [FinanceRecurringPayment]
     ) -> some View {
         let monthly = overview.detectedMonthlyRecurringTotal
-        let spendingShare = overview.monthlyOutflow > 0 ? monthly / overview.monthlyOutflow : 0
-        let actualLast12Months = payments.compactMap(\.spentLast12Months).reduce(0, +)
+        let spendingShare = overview.adjustedMonthlyOutflow > 0
+            ? monthly / overview.adjustedMonthlyOutflow
+            : 0
+        let actualLast12Months = confirmed.compactMap(\.spentLast12Months).reduce(0, +)
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
             Text("RECURRING ESTIMATE").sectionLabel()
             HStack(alignment: .firstTextBaseline) {
@@ -1656,10 +2393,14 @@ private struct RecurringPaymentsView: View {
             }
             Divider().overlay(AppTheme.separator)
             HStack {
-                summaryValue("\(payments.count)", label: "Detected")
+                summaryValue("\(confirmed.count)", label: "Confirmed")
+                if !possible.isEmpty {
+                    Spacer()
+                    summaryValue("\(possible.count)", label: "To review")
+                }
                 Spacer()
                 summaryValue(money(monthly * 12, code: overview.currencyCode), label: "Yearly pace")
-                if overview.monthlyOutflow > 0 {
+                if overview.adjustedMonthlyOutflow > 0, possible.isEmpty {
                     Spacer()
                     summaryValue(
                         spendingShare.formatted(.percent.precision(.fractionLength(0))),
@@ -1689,6 +2430,24 @@ private struct RecurringPaymentsView: View {
         .cardSurface()
     }
 
+    private func paymentList(
+        title: String,
+        payments: [FinanceRecurringPayment]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(title: title)
+            VStack(spacing: 0) {
+                ForEach(Array(payments.enumerated()), id: \.element.id) { index, payment in
+                    FinanceRecurringPaymentRow(payment: payment)
+                    if index < payments.count - 1 {
+                        Divider().overlay(AppTheme.separator)
+                    }
+                }
+            }
+            .cardSurface(padding: 0)
+        }
+    }
+
     private func summaryValue(_ value: String, label: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
@@ -1707,7 +2466,7 @@ private struct RecurringPaymentsView: View {
             Label("How estimates work", systemImage: "sparkles")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppTheme.primaryText)
-            Text("Orbit detects repeated posted charges using timing and amount consistency. Variable bills and future dates are estimates; confirm the actual amount with the merchant before making a payment decision.")
+            Text("Confirmed payments use timing and amount consistency. Merchant-based suggestions stay separate until more history arrives, and never enter the monthly total. Future dates remain estimates.")
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
         }
@@ -1784,9 +2543,175 @@ private enum FinanceTransactionDate {
     }
 }
 
+#if DEBUG
+private struct FinanceDashboardDesignPreview: View {
+    @State private var period: FinanceSpendingPeriod = .thisMonth
+    @State private var selectedCategoryID: String?
+
+    private let overview = FinanceDashboardPreviewData.overview
+
+    private var analysis: FinanceSpendingAnalysis {
+        FinanceSpendingAnalysis.make(overview: overview, period: period)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                    FinancePositionCard(overview: overview)
+                    LazyVGrid(
+                        columns: [GridItem(.flexible()), GridItem(.flexible())],
+                        spacing: AppTheme.Spacing.md
+                    ) {
+                        FinanceMetricCard(
+                            title: "This month in",
+                            value: money(overview.adjustedMonthlyInflow),
+                            systemImage: "arrow.down.left",
+                            tint: AppTheme.success
+                        )
+                        FinanceMetricCard(
+                            title: "This month spent",
+                            value: money(overview.adjustedMonthlyOutflow),
+                            systemImage: "arrow.up.right",
+                            tint: AppTheme.coral
+                        )
+                    }
+                    FinanceSmartInsightCard(overview: overview, spending: analysis)
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                        SectionHeader(title: "Spending breakdown", actionTitle: "See all") {}
+                        FinanceSpendingDashboardCard(
+                            analysis: analysis,
+                            selectedCategoryID: $selectedCategoryID,
+                            period: $period
+                        )
+                    }
+                }
+                .padding(AppTheme.Spacing.lg)
+            }
+            .background(AppTheme.background)
+            .navigationTitle("Finance")
+        }
+    }
+
+    private func money(_ amount: Double) -> String {
+        amount.formatted(.currency(code: overview.currencyCode).precision(.fractionLength(0...2)))
+    }
+}
+
+private struct FinanceSpendingDesignPreview: View {
+    @State private var period: FinanceSpendingPeriod = .thisMonth
+    @State private var selectedCategoryID: String?
+
+    private let overview = FinanceDashboardPreviewData.overview
+
+    private var analysis: FinanceSpendingAnalysis {
+        FinanceSpendingAnalysis.make(overview: overview, period: period)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                    SectionHeader(title: "Spending breakdown", actionTitle: "See all") {}
+                    FinanceSpendingDashboardCard(
+                        analysis: analysis,
+                        selectedCategoryID: $selectedCategoryID,
+                        period: $period
+                    )
+                }
+                .padding(AppTheme.Spacing.lg)
+            }
+            .background(AppTheme.background)
+            .navigationTitle("Finance")
+        }
+    }
+}
+
+private enum FinanceDashboardPreviewData {
+    static var overview: FinanceOverview {
+        let date = FinanceTransactionDate.dateOnly(.now)
+        let transactions = [
+            transaction("rent", "Parkside Apartments", "Rent And Utilities", 950, date),
+            transaction("groceries", "Whole Foods Market", "Food And Drink", 242.18, date),
+            transaction("dinner", "Saffron Kitchen", "Food And Drink", 86.40, date),
+            transaction("shopping", "Target", "General Merchandise", 219.34, date),
+            transaction("transport", "Shell", "Transportation", 146.22, date),
+            transaction("utilities", "Duke Energy", "Rent And Utilities", 198.10, date),
+            transaction("streaming", "Streamflix", "Entertainment", 61.97, date),
+            transaction("personal", "The Barber", "Personal Care", 49, date)
+        ]
+        let monthlyOutflow = transactions.reduce(0) { $0 + $1.amount }
+        return FinanceOverview(
+            institutions: [
+                FinanceInstitution(id: "chase", name: "Chase", accountCount: 2, needsAttention: false),
+                FinanceInstitution(id: "amex", name: "American Express", accountCount: 1, needsAttention: false)
+            ],
+            accounts: [],
+            recentTransactions: transactions,
+            monthlyInflow: 4_800,
+            monthlyOutflow: monthlyOutflow,
+            totalCash: 7_342.68,
+            totalCreditBalance: 1_240.32,
+            totalInvestments: 12_850.40,
+            recurringPayments: [
+                FinanceRecurringPayment(
+                    id: "streamflix",
+                    name: "Streamflix",
+                    category: "Entertainment",
+                    amount: 18.99,
+                    monthlyAmount: 18.99,
+                    currencyCode: "USD",
+                    cadence: .monthly,
+                    lastChargeDate: date,
+                    nextExpectedDate: nil,
+                    occurrences: 8,
+                    chargesLast12Months: 8,
+                    spentLast12Months: 151.92,
+                    isVariable: false,
+                    confidence: 0.98
+                )
+            ],
+            monthlyRecurringTotal: 263.44,
+            spendingByCategory: nil,
+            currencyCode: "USD",
+            lastUpdatedAt: nil
+        )
+    }
+
+    private static func transaction(
+        _ id: String,
+        _ merchant: String,
+        _ category: String,
+        _ amount: Double,
+        _ date: String
+    ) -> FinanceTransaction {
+        FinanceTransaction(
+            id: id,
+            accountID: "checking",
+            date: date,
+            name: merchant,
+            merchantName: merchant,
+            category: category,
+            amount: amount,
+            direction: .outflow,
+            pending: false,
+            currencyCode: "USD"
+        )
+    }
+}
+#endif
+
 #Preview {
     let app = PreviewSupport.appState()
     return FinanceView()
         .environmentObject(app)
         .environmentObject(app.finance)
+}
+
+#Preview("Finance dashboard design") {
+    FinanceDashboardDesignPreview()
+}
+
+#Preview("Finance spending breakdown") {
+    FinanceSpendingDesignPreview()
 }

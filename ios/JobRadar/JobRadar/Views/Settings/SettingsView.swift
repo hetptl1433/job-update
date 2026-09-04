@@ -25,6 +25,7 @@ struct SettingsView: View {
     private var selectedTextModel = AppConfig.bundledOpenAIModel
     @AppStorage(AppConfig.openAIRealtimeModelPreferenceKey)
     private var selectedRealtimeModel = AppConfig.bundledOpenAIRealtimeModel
+    @AppStorage("orbit.ai.healthContextEnabled") private var shareHealthWithAssistant = false
     @State private var adminPassword = ""
     @State private var showDisconnectConfirm = false
     @State private var showChatGPTSheet = false
@@ -216,6 +217,12 @@ struct SettingsView: View {
                 }
             }
             Text(selectedRealtimeModelChoice.detail)
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+            Toggle(isOn: $shareHealthWithAssistant) {
+                Label("Share Health summaries with Orbit AI", systemImage: "heart.text.square")
+            }
+            Text("Off by default. When enabled, Orbit may send derived health summaries and trends—not raw HealthKit samples—to your configured OpenAI account when you ask about Health.")
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
             AssistantMemorySettingsSummary(memory: app.assistantMemory)

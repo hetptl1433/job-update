@@ -38,16 +38,149 @@ export function normalizeAccount(account, item) {
   };
 }
 
-function categoryName(transaction) {
-  const category = transaction.personal_finance_category?.primary;
-  if (category) {
-    return category.toLowerCase().split("_").map(word => word[0]?.toUpperCase() + word.slice(1)).join(" ");
+function providerCategoryPrimary(transaction) {
+  return String(
+    transaction.providerCategoryPrimary
+      ?? transaction.personal_finance_category?.primary
+      ?? ""
+  ).toUpperCase();
+}
+
+function providerCategoryDetailed(transaction) {
+  return String(
+    transaction.providerCategoryDetailed
+      ?? transaction.personal_finance_category?.detailed
+      ?? ""
+  ).toUpperCase();
+}
+
+function legacyCategory(transaction) {
+  if (Array.isArray(transaction.category)) return transaction.category[0] || null;
+  return transaction.category || null;
+}
+
+function titleCaseProviderCategory(value) {
+  return value.toLowerCase().split("_").map(word =>
+    word[0]?.toUpperCase() + word.slice(1)
+  ).join(" ");
+}
+
+function normalizedTransactionText(transaction) {
+  return [
+    transaction.name,
+    transaction.merchantName,
+    transaction.merchant_name,
+    legacyCategory(transaction)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizedMerchantText(transaction) {
+  return [transaction.name, transaction.merchantName, transaction.merchant_name]
+    .filter(Boolean)
+    .join(" ")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function merchantProfile(transaction) {
+  const text = normalizedMerchantText(transaction);
+  if (/\b(openai|chatgpt)\b/.test(text)) {
+    return { key: "openai", name: "OpenAI", category: "Subscriptions", strength: "strong" };
   }
-  return transaction.category?.[0] || null;
+  if (/\b(playstation|play station|psn|sony interactive entertainment)\b/.test(text)) {
+    const strength = /\b(playstation plus|play station plus|ps plus|psplus|subscription|membership)\b/.test(text)
+      ? "strong"
+      : "possible";
+    return { key: "playstation", name: "PlayStation", category: "Entertainment", strength };
+  }
+
+  const foodMerchant = /\b(door ?dash|grubhub|uber ?eats|instacart|starbucks|dunkin|mcdonalds?|chipotle|chick fil a|taco bell|panera|subway|wendys?|burger king|dominos?|pizza hut|whole foods|trader joes?|kroger|publix|aldi|wegmans)\b/;
+  const foodDescription = /\b(restaurant|coffee shop|coffee house|cafe|cafeteria|bakery|pizzeria|sushi|steakhouse|bar and grill|grocery|supermarket)\b/;
+  if (foodMerchant.test(text) || foodDescription.test(text)) {
+    return { key: null, name: null, category: "Food And Drink", strength: null };
+  }
+  return null;
+}
+
+function explicitSubscriptionHint(transaction) {
+  const profile = merchantProfile(transaction);
+  if (profile?.strength) return profile.strength;
+  if (/subscription/i.test(String(legacyCategory(transaction) ?? ""))) return "strong";
+  const text = normalizedMerchantText(transaction);
+  return /\b(subscription|membership|monthly plan|annual plan|recurring charge)\b/.test(text)
+    ? "strong"
+    : null;
+}
+
+function isCreditCardPayment(transaction) {
+  const detailed = providerCategoryDetailed(transaction);
+  if (detailed === "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT") return true;
+
+  const category = String(legacyCategory(transaction) ?? "").toLowerCase();
+  if (/credit.?card.*(payment|bill)|card.*payment/.test(category)) return true;
+
+  // The detailed Plaid category is authoritative. These conservative text
+  // fallbacks cover older stored records and institutions whose descriptions
+  // arrive as "AMEX EPAYMENT" or "CARDMEMBER AUTOPAY".
+  const text = normalizedTransactionText(transaction);
+  const hasCardSignal = /\b(amex|american express|discover|capital one|cardmember|credit card|cc)\b/.test(text);
+  const hasPaymentSignal = /\b(payment|pymt|pmt|epay|epayment|autopay|paymt|thank you)\b/.test(text);
+  return hasCardSignal && hasPaymentSignal;
+}
+
+function transactionNature(transaction) {
+  if (isCreditCardPayment(transaction)) return "creditCardPayment";
+
+  const primary = providerCategoryPrimary(transaction);
+  if (primary === "TRANSFER_IN" || primary === "TRANSFER_OUT") return "accountTransfer";
+  if (primary === "LOAN_PAYMENTS") return "loanPayment";
+  if (primary === "INCOME") return "income";
+
+  const category = String(legacyCategory(transaction) ?? "").toLowerCase();
+  if (/\btransfer\b/.test(category)) return "accountTransfer";
+  if (/\bloan payments?\b/.test(category)) return "loanPayment";
+  if (/\bincome\b/.test(category)) return "income";
+
+  const direction = transaction.direction
+    ?? (Number(transaction.amount ?? 0) < 0 ? "inflow" : "outflow");
+  if (direction === "outflow") return "purchase";
+  if (direction === "inflow") return "refund";
+  return "other";
+}
+
+function categoryName(transaction, nature = transactionNature(transaction)) {
+  if (nature === "creditCardPayment") return "Credit Card Payment";
+  if (nature === "accountTransfer") return "Transfer";
+  if (nature === "loanPayment") return "Loan Payment";
+
+  const primary = providerCategoryPrimary(transaction);
+  const fallback = legacyCategory(transaction);
+  const profile = merchantProfile(transaction);
+  if (profile?.category) return profile.category;
+  if (primary === "GENERAL_MERCHANDISE"
+      || /\b(general )?merchandise\b/i.test(fallback ?? "")
+      || /^shops?$/i.test(fallback ?? "")) {
+    return "Shopping";
+  }
+  if (primary) return titleCaseProviderCategory(primary);
+  return fallback;
 }
 
 export function normalizeTransaction(transaction, fallbackCurrency = "USD") {
   const rawAmount = Number(transaction.amount ?? 0);
+  const direction = rawAmount < 0 ? "inflow" : "outflow";
+  const nature = transactionNature({ ...transaction, direction });
+  const profile = merchantProfile(transaction);
   return {
     id: transaction.transaction_id,
     accountID: transaction.account_id,
@@ -58,7 +191,8 @@ export function normalizeTransaction(transaction, fallbackCurrency = "USD") {
     authorizedDate: transaction.authorized_date || null,
     name: transaction.name || "Transaction",
     merchantName: transaction.merchant_name || null,
-    category: categoryName(transaction),
+    category: categoryName(transaction, nature),
+    categorySource: profile?.category ? "merchantRule" : "provider",
     providerCategoryPrimary: transaction.personal_finance_category?.primary || null,
     providerCategoryDetailed: transaction.personal_finance_category?.detailed || null,
     providerCategoryConfidence: transaction.personal_finance_category?.confidence_level || null,
@@ -66,7 +200,8 @@ export function normalizeTransaction(transaction, fallbackCurrency = "USD") {
     transactionCode: transaction.transaction_code || null,
     pendingTransactionID: transaction.pending_transaction_id || null,
     amount: Math.abs(rawAmount),
-    direction: rawAmount < 0 ? "inflow" : "outflow",
+    direction,
+    nature,
     pending: Boolean(transaction.pending),
     currencyCode: currency(transaction) || fallbackCurrency
   };
@@ -90,6 +225,8 @@ function publicAccount(record) {
 }
 
 function publicTransaction(record) {
+  const nature = transactionNature(record);
+  const profile = merchantProfile(record);
   return {
     id: record.id,
     accountID: record.accountID,
@@ -97,9 +234,12 @@ function publicTransaction(record) {
     authorizedDate: record.authorizedDate ?? null,
     name: record.name,
     merchantName: record.merchantName ?? null,
-    category: record.category ?? null,
+    category: categoryName(record, nature),
+    categorySource: record.categorySource ?? (profile?.category ? "merchantRule" : "provider"),
+    providerCategoryConfidence: record.providerCategoryConfidence ?? null,
     amount: record.amount,
     direction: record.direction,
+    nature,
     pending: record.pending,
     currencyCode: record.currencyCode
   };
@@ -113,7 +253,7 @@ const RECURRING_CADENCES = Object.freeze([
   { cadence: "quarterly", days: 91.3125, tolerance: 14, minimumOccurrences: 3, monthlyFactor: 1 / 3 },
   { cadence: "annual", days: 365.25, tolerance: 40, minimumOccurrences: 2, monthlyFactor: 1 / 12 }
 ]);
-const NON_RECURRING_CATEGORY = /food|general merchandise|transportation|travel|medical|transfer|income/i;
+const NON_RECURRING_CATEGORY = /food|general merchandise|shopping|transportation|travel|medical|transfer|income/i;
 
 function median(values) {
   if (values.length === 0) return 0;
@@ -129,6 +269,8 @@ function roundMoney(value) {
 }
 
 function recurringDescriptor(transaction) {
+  const profile = merchantProfile(transaction);
+  if (profile?.key) return profile.key;
   const raw = transaction.merchantName || transaction.name || "";
   return raw
     .normalize("NFKD")
@@ -152,7 +294,7 @@ function addUTCDays(dateString, days) {
   return new Date(start + Math.round(days) * DAY_MILLISECONDS).toISOString().slice(0, 10);
 }
 
-function detectCadence(transactions) {
+function detectCadence(transactions, allowTwoOccurrences = false) {
   const dated = transactions
     .map(transaction => ({ transaction, day: utcDay(transaction.date) }))
     .filter(entry => entry.day != null)
@@ -173,9 +315,14 @@ function detectCadence(transactions) {
   );
   let best = null;
   for (const cadence of RECURRING_CADENCES) {
-    if (uniqueDays.length < cadence.minimumOccurrences) continue;
+    const minimumOccurrences = allowTwoOccurrences
+      ? Math.min(cadence.minimumOccurrences, 2)
+      : cadence.minimumOccurrences;
+    if (uniqueDays.length < minimumOccurrences) continue;
     const matching = intervals.filter(interval => Math.abs(interval - cadence.days) <= cadence.tolerance);
-    const requiredMatches = cadence.cadence === "annual"
+    const requiredMatches = intervals.length === 1
+      ? 1
+      : cadence.cadence === "annual"
       ? 1
       : Math.max(2, Math.ceil(intervals.length * 0.65));
     if (matching.length < requiredMatches) continue;
@@ -195,7 +342,10 @@ function detectCadence(transactions) {
 function recurringPayments(transactions, now) {
   const groups = new Map();
   for (const transaction of transactions) {
-    if (transaction.pending || transaction.direction !== "outflow" || transaction.amount < 0.5) continue;
+    if (transaction.pending
+        || transaction.direction !== "outflow"
+        || transaction.nature !== "purchase"
+        || transaction.amount < 0.5) continue;
     const descriptor = recurringDescriptor(transaction);
     if (descriptor.length < 2) continue;
     const key = `${transaction.currencyCode}|${descriptor}`;
@@ -208,9 +358,9 @@ function recurringPayments(transactions, now) {
   const rollingYearStart = new Date(now.getTime() - (365 * DAY_MILLISECONDS)).toISOString().slice(0, 10);
   const results = [];
   for (const [key, group] of groups) {
-    const cadence = detectCadence(group);
-    if (!cadence) continue;
-
+    const hints = group.map(explicitSubscriptionHint).filter(Boolean);
+    const hint = hints.includes("strong") ? "strong" : hints.includes("possible") ? "possible" : null;
+    const cadence = detectCadence(group, hint === "strong");
     const amounts = group.map(transaction => transaction.amount);
     const typicalAmount = median(amounts);
     const fixedTolerance = Math.max(3, typicalAmount * 0.2);
@@ -219,12 +369,45 @@ function recurringPayments(transactions, now) {
     const latest = [...group].sort((a, b) => b.date.localeCompare(a.date))[0];
     const category = latest.category ?? null;
     if (NON_RECURRING_CATEGORY.test(category ?? "")) continue;
-    const variableCategory = /rent|utilit|telecommunication|insurance/i.test(category ?? "");
-    if (amountConsistency < (variableCategory ? 0.5 : 0.75)) continue;
-
     const latestDay = utcDay(latest.date);
     if (latestDay == null || todayDay == null) continue;
     const daysSinceLatest = (todayDay - latestDay) / DAY_MILLISECONDS;
+    const chargesLast12Months = group.filter(transaction =>
+      transaction.date >= rollingYearStart && transaction.date <= today
+    );
+    const profile = merchantProfile(latest);
+
+    // Merchant knowledge makes a new OpenAI/PlayStation/membership charge
+    // visible immediately, but it remains a review suggestion until posting
+    // history proves a cadence. Suggested items do not enter monthly totals.
+    if (!cadence) {
+      if (!hint || daysSinceLatest > 400) continue;
+      results.push({
+        id: createHash("sha256").update(key, "utf8").digest("hex").slice(0, 24),
+        name: profile?.name || latest.merchantName || latest.name,
+        category,
+        amount: roundMoney(typicalAmount),
+        monthlyAmount: roundMoney(typicalAmount),
+        currencyCode: latest.currencyCode,
+        cadence: "irregular",
+        lastChargeDate: latest.date,
+        nextExpectedDate: null,
+        occurrences: new Set(group.map(transaction => transaction.date)).size,
+        chargesLast12Months: chargesLast12Months.length,
+        spentLast12Months: roundMoney(chargesLast12Months.reduce(
+          (total, transaction) => total + transaction.amount,
+          0
+        )),
+        isVariable: amounts.some(amount => Math.abs(amount - typicalAmount) > Math.max(1, typicalAmount * 0.05)),
+        confidence: hint === "strong" ? 0.72 : 0.55,
+        status: "possible",
+        detectionSource: "merchantKnowledge"
+      });
+      continue;
+    }
+
+    const variableCategory = /rent|utilit|telecommunication|insurance/i.test(category ?? "");
+    if (amountConsistency < (variableCategory ? 0.5 : 0.75)) continue;
     if (daysSinceLatest > cadence.days * 1.8 + cadence.tolerance) continue;
 
     let nextExpectedDate = addUTCDays(latest.date, cadence.intervalDays || cadence.days);
@@ -236,15 +419,12 @@ function recurringPayments(transactions, now) {
     }
 
     const monthlyAmount = roundMoney(typicalAmount * cadence.monthlyFactor);
-    const chargesLast12Months = group.filter(transaction =>
-      transaction.date >= rollingYearStart && transaction.date <= today
-    );
     const confidence = Math.min(0.99, Math.max(0.5,
       cadence.score * 0.65 + amountConsistency * 0.25 + Math.min(group.length / 12, 1) * 0.1
     ));
     results.push({
       id: createHash("sha256").update(key, "utf8").digest("hex").slice(0, 24),
-      name: latest.merchantName || latest.name,
+      name: profile?.name || latest.merchantName || latest.name,
       category,
       amount: roundMoney(typicalAmount),
       monthlyAmount,
@@ -259,19 +439,26 @@ function recurringPayments(transactions, now) {
         0
       )),
       isVariable: amounts.some(amount => Math.abs(amount - typicalAmount) > Math.max(1, typicalAmount * 0.05)),
-      confidence: Math.round(confidence * 100) / 100
+      confidence: Math.round(confidence * 100) / 100,
+      status: "confirmed",
+      detectionSource: hint ? "merchantAndHistory" : "history"
     });
   }
 
   return results.sort((a, b) =>
-    (a.nextExpectedDate ?? "9999").localeCompare(b.nextExpectedDate ?? "9999") || a.name.localeCompare(b.name)
+    (a.status === b.status ? 0 : a.status === "confirmed" ? -1 : 1)
+      || (a.nextExpectedDate ?? "9999").localeCompare(b.nextExpectedDate ?? "9999")
+      || a.name.localeCompare(b.name)
   );
 }
 
 function spendingByCategory(transactions, currentMonth, monthlyOutflow) {
   const totals = new Map();
   for (const transaction of transactions) {
-    if (transaction.pending || transaction.direction !== "outflow" || !transaction.date.startsWith(currentMonth)) {
+    if (transaction.pending
+        || transaction.direction !== "outflow"
+        || transaction.nature !== "purchase"
+        || !transaction.date.startsWith(currentMonth)) {
       continue;
     }
     const name = transaction.category || "Other";
@@ -301,8 +488,14 @@ export function buildOverview(records, now = new Date()) {
   let monthlyOutflow = 0;
   for (const transaction of transactions) {
     if (transaction.pending || !transaction.date.startsWith(currentMonth)) continue;
-    if (transaction.direction === "inflow") monthlyInflow += transaction.amount;
-    else monthlyOutflow += transaction.amount;
+    if (transaction.direction === "outflow" && transaction.nature === "purchase") {
+      monthlyOutflow += transaction.amount;
+    } else if (transaction.direction === "inflow"
+        && transaction.nature !== "creditCardPayment"
+        && transaction.nature !== "accountTransfer"
+        && transaction.nature !== "loanPayment") {
+      monthlyInflow += transaction.amount;
+    }
   }
 
   const countByItem = new Map();
@@ -343,7 +536,9 @@ export function buildOverview(records, now = new Date()) {
     totalCreditBalance,
     totalInvestments,
     recurringPayments: recurring,
-    monthlyRecurringTotal: roundMoney(recurring.reduce((total, payment) => total + payment.monthlyAmount, 0)),
+    monthlyRecurringTotal: roundMoney(recurring
+      .filter(payment => payment.status !== "possible")
+      .reduce((total, payment) => total + payment.monthlyAmount, 0)),
     spendingByCategory: categories,
     currencyCode: accounts[0]?.currencyCode ?? "USD",
     lastUpdatedAt

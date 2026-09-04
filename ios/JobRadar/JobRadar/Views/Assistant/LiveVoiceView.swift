@@ -31,6 +31,7 @@ struct LiveVoiceView: View {
     @State private var modelRestartTask: Task<Void, Never>?
     @State private var showConnect = false
     @AppStorage("orbit.ai.financeContextEnabled") private var shareFinanceWithAssistant = false
+    @AppStorage("orbit.ai.healthContextEnabled") private var shareHealthWithAssistant = false
     @AppStorage("orbit.voice.captionsEnabled") private var captionsEnabled = true
     @AppStorage(AppConfig.openAIRealtimeModelPreferenceKey)
     private var selectedRealtimeModel = AppConfig.bundledOpenAIRealtimeModel
@@ -476,7 +477,8 @@ struct LiveVoiceView: View {
             app: app,
             inbox: inbox,
             jobs: jobs,
-            shareFinance: shareFinanceWithAssistant
+            shareFinance: shareFinanceWithAssistant,
+            shareHealth: shareHealthWithAssistant
         )
     }
 

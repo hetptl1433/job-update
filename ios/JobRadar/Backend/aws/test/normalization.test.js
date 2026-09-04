@@ -65,6 +65,57 @@ test("converts Plaid's amount sign to explicit inflow and outflow", () => {
   assert.equal(groceries.category, "Food And Drink");
 });
 
+test("uses consumer categories and identifies credit-card payments", () => {
+  const merchandise = normalizeTransaction({
+    transaction_id: "amazon-1",
+    account_id: "amex-card",
+    date: "2026-08-10",
+    name: "AMAZON MKTPLACE PMTS",
+    merchant_name: "Amazon",
+    amount: 84.32,
+    pending: false,
+    iso_currency_code: "USD",
+    personal_finance_category: {
+      primary: "GENERAL_MERCHANDISE",
+      detailed: "GENERAL_MERCHANDISE_ONLINE_MARKETPLACES"
+    }
+  });
+  const cardPayment = normalizeTransaction({
+    transaction_id: "amex-payment-1",
+    account_id: "checking-1",
+    date: "2026-08-15",
+    name: "AMERICAN EXPRESS ACH PAYMENT",
+    amount: 84.32,
+    pending: false,
+    iso_currency_code: "USD",
+    personal_finance_category: {
+      primary: "LOAN_PAYMENTS",
+      detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"
+    }
+  });
+
+  assert.equal(merchandise.category, "Shopping");
+  assert.equal(merchandise.nature, "purchase");
+  assert.equal(cardPayment.category, "Credit Card Payment");
+  assert.equal(cardPayment.nature, "creditCardPayment");
+});
+
+test("keeps food and drink distinct and repairs vague restaurant categories", () => {
+  const dinner = normalizeTransaction({
+    transaction_id: "dinner-1",
+    account_id: "card-1",
+    date: "2026-08-18",
+    name: "DOORDASH *LOCAL RESTAURANT",
+    amount: 34.5,
+    pending: false,
+    iso_currency_code: "USD",
+    personal_finance_category: { primary: "OTHER" }
+  });
+
+  assert.equal(dinner.category, "Food And Drink");
+  assert.equal(dinner.categorySource, "merchantRule");
+});
+
 test("builds compact totals without leaking backend storage fields", () => {
   const timestamp = "2026-08-09T12:00:00.000Z";
   const records = [
@@ -188,6 +239,54 @@ test("detects active recurring payments and normalizes them to a monthly total",
   assert.equal(overview.monthlyRecurringTotal, 15.99);
 });
 
+test("surfaces new OpenAI and PlayStation charges for subscription review", () => {
+  const records = [
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "openai-new", account_id: "credit-1", date: "2026-08-20",
+      name: "OPENAI *CHATGPT SUBSCRIPTION", amount: 20, pending: false,
+      iso_currency_code: "USD", personal_finance_category: { primary: "OTHER" }
+    }) },
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "ps-new", account_id: "credit-1", date: "2026-08-21",
+      name: "PLAYSTATION NETWORK", amount: 17.99, pending: false,
+      iso_currency_code: "USD", personal_finance_category: { primary: "ENTERTAINMENT" }
+    }) }
+  ];
+
+  const overview = buildOverview(records, new Date("2026-08-27T12:00:00Z"));
+
+  assert.deepEqual(overview.recurringPayments.map(payment => payment.name), ["OpenAI", "PlayStation"]);
+  assert.ok(overview.recurringPayments.every(payment => payment.status === "possible"));
+  assert.ok(overview.recurringPayments.every(payment => payment.nextExpectedDate === null));
+  assert.equal(overview.monthlyRecurringTotal, 0);
+  assert.equal(overview.recentTransactions.find(value => value.id === "openai-new").category, "Subscriptions");
+  assert.equal(overview.recentTransactions.find(value => value.id === "ps-new").category, "Entertainment");
+});
+
+test("confirms a known subscription after two consistent monthly charges", () => {
+  const records = ["2026-07-20", "2026-08-20"].map((date, index) => ({
+    entityType: "TRANSACTION",
+    ...normalizeTransaction({
+      transaction_id: `openai-${index}`,
+      account_id: "credit-1",
+      date,
+      name: index === 0 ? "OPENAI CHATGPT PLUS" : "OPENAI *CHATGPT SUBSCRIPTION 8392",
+      amount: 20,
+      pending: false,
+      iso_currency_code: "USD",
+      personal_finance_category: { primary: "OTHER" }
+    })
+  }));
+
+  const overview = buildOverview(records, new Date("2026-08-27T12:00:00Z"));
+
+  assert.equal(overview.recurringPayments.length, 1);
+  assert.equal(overview.recurringPayments[0].name, "OpenAI");
+  assert.equal(overview.recurringPayments[0].status, "confirmed");
+  assert.equal(overview.recurringPayments[0].cadence, "monthly");
+  assert.equal(overview.monthlyRecurringTotal, 20);
+});
+
 test("does not label ordinary repeat purchases or old canceled charges as subscriptions", () => {
   const groceryDates = ["2026-07-18", "2026-07-25", "2026-08-01", "2026-08-08"];
   const canceledDates = ["2025-11-10", "2025-12-10", "2026-01-10"];
@@ -254,4 +353,45 @@ test("builds a current-month spending breakdown without pending charges", () => 
   ]);
   assert.equal(overview.spendingByCategory[0].amount, 1200);
   assert.equal(overview.spendingByCategory[0].share, 0.9231);
+});
+
+test("keeps both sides of a card payment visible without counting them as new spending", () => {
+  const records = [
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "amazon-purchase", account_id: "amex-card", date: "2026-08-03",
+      name: "AMAZON MKTPLACE", merchant_name: "Amazon", amount: 120, pending: false,
+      iso_currency_code: "USD",
+      personal_finance_category: {
+        primary: "GENERAL_MERCHANDISE",
+        detailed: "GENERAL_MERCHANDISE_ONLINE_MARKETPLACES"
+      }
+    }) },
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "checking-payment", account_id: "checking", date: "2026-08-20",
+      name: "AMEX EPAYMENT", amount: 120, pending: false, iso_currency_code: "USD",
+      personal_finance_category: {
+        primary: "LOAN_PAYMENTS",
+        detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"
+      }
+    }) },
+    { entityType: "TRANSACTION", ...normalizeTransaction({
+      transaction_id: "card-payment-credit", account_id: "amex-card", date: "2026-08-20",
+      name: "PAYMENT RECEIVED - THANK YOU", amount: -120, pending: false,
+      iso_currency_code: "USD",
+      personal_finance_category: {
+        primary: "LOAN_PAYMENTS",
+        detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"
+      }
+    }) }
+  ];
+
+  const overview = buildOverview(records, new Date("2026-08-27T12:00:00Z"));
+
+  assert.equal(overview.recentTransactions.length, 3);
+  assert.equal(overview.recentTransactions.filter(value => value.nature === "creditCardPayment").length, 2);
+  assert.equal(overview.monthlyOutflow, 120);
+  assert.equal(overview.monthlyInflow, 0);
+  assert.deepEqual(overview.spendingByCategory.map(value => [value.name, value.amount]), [
+    ["Shopping", 120]
+  ]);
 });

@@ -94,6 +94,14 @@ enum AssistantPrompt {
         calculated by Orbit. Preserve their currency, time period, pending/review
         status and observed-net/gross label; do not recompute, combine currencies,
         or treat all inflows as income.
+
+        Health context is informational and may contain app-defined trend or body-load
+        estimates. Clearly identify those as estimates, preserve missing-data and
+        coverage caveats, and never present them as measured psychological stress,
+        readiness, a diagnosis, a cause, a risk assessment, or medical advice. Do not
+        invent normal ranges, prescribe treatment, or tell the owner to ignore symptoms.
+        For concerning symptoms or urgent questions, recommend appropriate professional
+        or emergency help without attempting a diagnosis.
         """
 
     static func conversationInput(

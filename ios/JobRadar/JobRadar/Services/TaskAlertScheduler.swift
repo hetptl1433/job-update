@@ -8,6 +8,36 @@ import SwiftUI
 final class TaskAlertScheduler {
     static let shared = TaskAlertScheduler()
 
+    /// AlarmKit renders its templated alert on a dark system surface. Keep this
+    /// color fixed and high-contrast instead of inheriting an adaptive app tint;
+    /// black makes the alarm title and controls appear blank on that surface.
+    private static let presentationTint = Color(
+        red: 243.0 / 255.0,
+        green: 38.0 / 255.0,
+        blue: 62.0 / 255.0
+    )
+    private static let presentationVersion = 1
+    private static let presentationVersionKey = "orbit.taskAlerts.presentationVersion"
+    private let preferences = UserDefaults(suiteName: SharedTaskStore.appGroupID) ?? .standard
+
+    /// AlarmKit snapshots presentation attributes when an alarm is scheduled.
+    /// Refresh pending alarms once after a presentation change so existing To
+    /// Dos don't retain stale colors from an earlier app version.
+    func refreshPendingAlarmPresentationsIfNeeded(tasks: [TaskItem]) async {
+        guard #available(iOS 26.0, *),
+              preferences.integer(forKey: Self.presentationVersionKey) < Self.presentationVersion else {
+            return
+        }
+
+        for task in tasks where !task.isCompleted
+            && task.effectiveAlertStyle == .alarm
+            && task.dueDate.map({ $0 > .now }) == true {
+            await synchronize(task: task)
+        }
+
+        preferences.set(Self.presentationVersion, forKey: Self.presentationVersionKey)
+    }
+
     func synchronize(task: TaskItem) async {
         await cancel(taskID: task.id)
         guard !task.isCompleted, let date = task.dueDate, date > .now else { return }
@@ -107,7 +137,7 @@ final class TaskAlertScheduler {
             let attributes = AlarmAttributes(
                 presentation: presentation,
                 metadata: OrbitAlarmMetadata(itemID: id),
-                tintColor: .black
+                tintColor: Self.presentationTint
             )
             let configuration = AlarmManager.AlarmConfiguration.alarm(
                 schedule: .fixed(date), attributes: attributes

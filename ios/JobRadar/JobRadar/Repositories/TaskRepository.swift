@@ -28,13 +28,18 @@ final class TaskRepository: ObservableObject {
         watchSync.start()
         reload()
         calendarSyncEnabled = OrbitIntegrationPreferences.appleCalendarSyncEnabled
-        for task in migrated {
-            // Cancel the legacy notification namespace before scheduling the
-            // same item through the unified To Do path.
-            Task {
+        let migratedIDs = Set(migrated.map(\.id))
+        let storedTasks = tasks.filter { !migratedIDs.contains($0.id) }
+        Task {
+            for task in migrated {
+                // Cancel the legacy notification namespace before scheduling
+                // the same item through the unified To Do path.
                 await TaskAlertScheduler.shared.cancel(reminderID: task.id)
                 await TaskAlertScheduler.shared.synchronize(task: task)
             }
+            await TaskAlertScheduler.shared.refreshPendingAlarmPresentationsIfNeeded(tasks: storedTasks)
+        }
+        for task in migrated {
             if calendarSyncEnabled { synchronizeToApple(task.id) }
         }
     }
@@ -59,43 +64,68 @@ final class TaskRepository: ObservableObject {
         return true
     }
 
-    func update(_ item: TaskItem) {
-        guard let index = tasks.firstIndex(where: { $0.id == item.id }) else { return }
+    @discardableResult
+    func update(_ item: TaskItem) -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == item.id }) else { return false }
+        let previous = tasks[index]
         var value = item
         value.updatedAt = .now
         tasks[index] = value
-        persistAndSynchronize(value.id)
+        guard persistAndSynchronize(value.id) else {
+            tasks[index] = previous
+            return false
+        }
+        return true
     }
 
-    func toggle(_ item: TaskItem) {
-        guard let index = tasks.firstIndex(where: { $0.id == item.id }) else { return }
-        tasks[index].isCompleted.toggle()
+    @discardableResult
+    func toggle(_ item: TaskItem) -> Bool {
+        guard let current = tasks.first(where: { $0.id == item.id }) else { return false }
+        return setCompletion(item.id, isCompleted: !current.isCompleted)
+    }
+
+    /// Sets completion to an explicit value so UI undo and external sync are
+    /// idempotent even if the task changed during the undo window.
+    @discardableResult
+    func setCompletion(_ id: UUID, isCompleted: Bool) -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return false }
+        guard tasks[index].isCompleted != isCompleted else { return true }
+        let previous = tasks[index]
+        tasks[index].isCompleted = isCompleted
         tasks[index].updatedAt = .now
-        persistAndSynchronize(tasks[index].id)
+        guard persistAndSynchronize(id) else {
+            tasks[index] = previous
+            return false
+        }
+        return true
     }
 
     private func completeFromWatch(_ id: UUID) {
-        guard let index = tasks.firstIndex(where: { $0.id == id }),
-              !tasks[index].isCompleted else { return }
-        tasks[index].isCompleted = true
-        tasks[index].updatedAt = .now
-        persistAndSynchronize(id)
+        _ = setCompletion(id, isCompleted: true)
     }
 
-    func delete(_ item: TaskItem) {
-        tasks.removeAll { $0.id == item.id }
+    @discardableResult
+    func delete(_ item: TaskItem) -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == item.id }) else { return false }
+        let previous = tasks
+        tasks.remove(at: index)
+        guard persist() else {
+            tasks = previous
+            return false
+        }
         Task { await TaskAlertScheduler.shared.cancel(taskID: item.id) }
         if calendarSyncEnabled {
             do { try appleCalendar.deleteTaskEvent(identifier: item.appleCalendarEventID) }
             catch { calendarSyncError = error.localizedDescription }
         }
-        persist()
+        return true
     }
 
-    func reschedule(_ item: TaskItem, to date: Date?) {
-        var value = item
+    @discardableResult
+    func reschedule(_ item: TaskItem, to date: Date?) -> Bool {
+        guard var value = tasks.first(where: { $0.id == item.id }) else { return false }
         value.dueDate = date
-        update(value)
+        return update(value)
     }
 
     func propose(
