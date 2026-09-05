@@ -68,6 +68,7 @@ final class AppState: ObservableObject {
     @Published var financePath: [FinanceRoute] = []
     @Published var assistantLaunch: AssistantLaunch?
     @Published var assistantInitialPrompt: String?
+    @Published var quickTaskCaptureRequested = false
     /// The single signed-in identity (one email).
     @Published private(set) var user: UserSession?
     /// Connected mailboxes. `user` remains the one primary Orbit identity while
@@ -86,6 +87,7 @@ final class AppState: ObservableObject {
     @Published private(set) var lastSyncedAt: Date?
     @Published private(set) var calendarState: LoadState<[CalendarEvent]> = .disconnected
     private var emailScanGeneration = 0
+    private var isBootstrapping = false
 
     // Service layer
     let auth: AuthenticationManager
@@ -144,11 +146,26 @@ final class AppState: ObservableObject {
             }
             return await self.makeWatchVoiceBootstrap(for: request)
         }
+
+        // OpenIntent writes this app-group value before the process is brought
+        // forward, so a cold widget launch can choose its lightweight UI before
+        // normal account and service restoration starts.
+        consumePendingLaunchRequest()
     }
 
     // MARK: Launch
 
     func bootstrap() async {
+        guard phase == .launching, !isBootstrapping else { return }
+        consumePendingLaunchRequest()
+
+        // The task repository is already restored synchronously. Keep the
+        // launch screen lightweight while the user captures a title, then do
+        // Google, inbox, calendar, health, and finance restoration afterward.
+        guard !isPrioritizingQuickTaskCapture else { return }
+
+        isBootstrapping = true
+        defer { isBootstrapping = false }
         loadPersistedState()
         if let session = await auth.restoreSession() {
             apply(session)
@@ -161,6 +178,30 @@ final class AppState: ObservableObject {
         consumePendingLaunchRequest()
     }
 
+    /// A cached profile is the same local fallback `restoreSession()` already
+    /// uses. Requiring setup completion prevents a signed-out or unfinished
+    /// account from writing through the fast path.
+    var canPresentQuickTaskCapture: Bool {
+        guard quickTaskCaptureRequested else { return false }
+        if phase == .authenticated { return true }
+        return phase == .launching && isSetupComplete && UserSession.restore() != nil
+    }
+
+    var isPrioritizingQuickTaskCapture: Bool {
+        phase == .launching && canPresentQuickTaskCapture
+    }
+
+    func setQuickTaskCapturePresented(_ presented: Bool) {
+        quickTaskCaptureRequested = presented
+        guard !presented, phase == .launching else { return }
+        Task { [weak self] in
+            // Let the capture dismissal finish its frame before hydrating the
+            // rest of Orbit on the main actor.
+            await Task.yield()
+            await self?.bootstrap()
+        }
+    }
+
     /// System launch intents run outside the main app process. Consume their
     /// app-group request after state restoration and on every foreground entry.
     func consumePendingLaunchRequest() {
@@ -169,6 +210,10 @@ final class AppState: ObservableObject {
         case .voice:
             selectedTab = .home
             assistantLaunch = .voice
+        case .quickTaskCapture:
+            assistantLaunch = nil
+            tasks.createTaskRequested = false
+            quickTaskCaptureRequested = true
         }
     }
 
@@ -555,6 +600,7 @@ final class AppState: ObservableObject {
         emailScanGeneration += 1
         isSyncing = false
         syncStageMessage = nil
+        finance.cancelAutomaticAIOrganization()
         KeychainStore.remove(KeychainKeys.openAIKey)
         connections.aiConnected = false
     }
@@ -1000,20 +1046,32 @@ final class AppState: ObservableObject {
             return true
         }
         if url.scheme == "orbit", url.host == "tasks" {
+            if let value = url.pathComponents.dropFirst().first,
+               value == "new" || value == "quick-add" {
+                assistantLaunch = nil
+                tasks.createTaskRequested = false
+                quickTaskCaptureRequested = true
+                return true
+            }
             selectedTab = .tasks
             if let value = url.pathComponents.dropFirst().first {
-                if value == "new" { tasks.createTaskRequested = true }
-                else if let id = UUID(uuidString: value) { tasks.openTaskID = id }
+                if let id = UUID(uuidString: value) { tasks.openTaskID = id }
             }
             return true
         }
         if url.scheme == "orbit", url.host == "reminders" {
             // Backward compatibility for old widgets and Calendar event URLs:
             // migrated reminders retain their UUID in the unified To Do store.
+            if let value = url.pathComponents.dropFirst().first,
+               value == "new" || value == "quick-add" {
+                assistantLaunch = nil
+                tasks.createTaskRequested = false
+                quickTaskCaptureRequested = true
+                return true
+            }
             selectedTab = .tasks
             if let value = url.pathComponents.dropFirst().first {
-                if value == "new" { tasks.createTaskRequested = true }
-                else if let id = UUID(uuidString: value) { tasks.openTaskID = id }
+                if let id = UUID(uuidString: value) { tasks.openTaskID = id }
             }
             return true
         }
@@ -1139,6 +1197,7 @@ final class AppState: ObservableObject {
         emailScanHistory.unload()
         assistantLaunch = nil
         assistantInitialPrompt = nil
+        quickTaskCaptureRequested = false
         financePath = []
         phase = .signedOut
     }

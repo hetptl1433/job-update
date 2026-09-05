@@ -165,9 +165,10 @@ final class APIClient {
         ).data
     }
 
-    /// Persists an explicit user decision. The backend verifies transaction
-    /// ownership and applies the resulting descriptor rule only within that
-    /// same authenticated user's Finance partition.
+    /// Persists an explicit user decision or an attributed automatic AI
+    /// decision. The backend verifies transaction ownership and applies the
+    /// resulting descriptor rule only within that authenticated user's Finance
+    /// partition. Older manual callers omit the optional provenance fields.
     func classifyIncomeTransaction(
         _ transactionID: String,
         request: IncomeClassificationRequest

@@ -90,11 +90,15 @@ final class TaskRepository: ObservableObject {
     func setCompletion(_ id: UUID, isCompleted: Bool) -> Bool {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return false }
         guard tasks[index].isCompleted != isCompleted else { return true }
-        let previous = tasks[index]
-        tasks[index].isCompleted = isCompleted
-        tasks[index].updatedAt = .now
+        let previous = tasks
+        var updated = tasks
+        updated[index].isCompleted = isCompleted
+        updated[index].updatedAt = .now
+        // Assign a fresh collection so every completion produces one reliable
+        // @Published change for Home and To Do, without requiring a reload.
+        tasks = updated
         guard persistAndSynchronize(id) else {
-            tasks[index] = previous
+            tasks = previous
             return false
         }
         return true
@@ -220,7 +224,13 @@ final class TaskRepository: ObservableObject {
         guard persist() else { return false }
         guard let task = tasks.first(where: { $0.id == id }) else { return true }
         Task { await TaskAlertScheduler.shared.synchronize(task: task) }
-        if calendarSyncEnabled { synchronizeToApple(id) }
+        // A title-only Quick Add has nothing to mirror. Avoid touching EventKit
+        // on the latency-sensitive save path unless an event must be created or
+        // an existing linked event must be removed.
+        if calendarSyncEnabled,
+           task.dueDate != nil || task.appleCalendarEventID != nil {
+            synchronizeToApple(id)
+        }
         return true
     }
 

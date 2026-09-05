@@ -3,9 +3,12 @@ import {
   buildIncomeOverview,
   INCOME_SOURCE_TYPES,
   isValidDateOnly,
+  MINIMUM_AI_CLASSIFICATION_CONFIDENCE,
   normalizedIncomeDescriptor
 } from "./income.js";
 import { listUserRecords, saveIncomeClassification } from "./store.js";
+
+const INCOME_DECISION_SOURCES = new Set(["user", "ai"]);
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) &&
@@ -44,9 +47,51 @@ export function validateIncomeTransactionID(value) {
 
 export function validateIncomeClassificationRequest(value) {
   if (!plainObject(value)) throw new HTTPError(400, "The classification request must be a JSON object.");
-  rejectUnknownKeys(value, new Set(["classification", "sourceName", "type", "sourceType", "asOfDate", "timeZone"]));
+  rejectUnknownKeys(value, new Set([
+    "classification",
+    "sourceName",
+    "type",
+    "sourceType",
+    "decisionSource",
+    "confidence",
+    "reason",
+    "asOfDate",
+    "timeZone"
+  ]));
   if (value.classification !== "income" && value.classification !== "notIncome") {
     throw new HTTPError(400, "classification must be income or notIncome.");
+  }
+
+  const decisionSource = value.decisionSource ?? "user";
+  if (!INCOME_DECISION_SOURCES.has(decisionSource)) {
+    throw new HTTPError(400, "decisionSource must be user or ai.");
+  }
+
+  let confidence;
+  if (value.confidence !== undefined) {
+    if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) ||
+        value.confidence < 0 || value.confidence > 1) {
+      throw new HTTPError(400, "confidence must be a finite number from 0 through 1.");
+    }
+    confidence = value.confidence;
+  }
+
+  let reason;
+  if (value.reason !== undefined) {
+    if (typeof value.reason !== "string" || !value.reason.trim() || value.reason.trim().length > 280 ||
+        /[\u0000-\u001f\u007f]/.test(value.reason)) {
+      throw new HTTPError(400, "reason must be 1 to 280 characters without control characters.");
+    }
+    reason = value.reason.trim();
+  }
+  if (decisionSource === "ai" && (confidence === undefined || reason === undefined)) {
+    throw new HTTPError(400, "AI classifications require confidence and reason.");
+  }
+  if (decisionSource === "ai" && confidence < MINIMUM_AI_CLASSIFICATION_CONFIDENCE) {
+    throw new HTTPError(
+      400,
+      `AI classifications require confidence of at least ${MINIMUM_AI_CLASSIFICATION_CONFIDENCE.toFixed(2)}.`
+    );
   }
 
   let sourceName;
@@ -68,7 +113,15 @@ export function validateIncomeClassificationRequest(value) {
 
   const localDate = validateIncomeRequest({ asOfDate: value.asOfDate, timeZone: value.timeZone });
 
-  return { classification: value.classification, sourceName, sourceType, ...localDate };
+  return {
+    classification: value.classification,
+    sourceName,
+    sourceType,
+    decisionSource,
+    confidence,
+    reason,
+    ...localDate
+  };
 }
 
 export async function getIncomeOverview(userSub, request) {
@@ -90,6 +143,11 @@ export async function classifyIncomeTransaction(userSub, transactionID, request,
 
   const existing = records.find(record =>
     record.entityType === "INCOME_CLASSIFICATION" && record.transactionID === validID) ?? null;
+  // Missing decisionSource is the legacy user-authored format. Never let an
+  // asynchronous AI pass replace either an explicit or legacy owner decision.
+  if (value.decisionSource === "ai" && existing && existing.decisionSource !== "ai") {
+    return buildIncomeOverview(records, { asOfDate: value.asOfDate });
+  }
   const saved = await saveClassification(userSub, transaction, {
     ...value,
     descriptor: normalizedIncomeDescriptor(transaction)

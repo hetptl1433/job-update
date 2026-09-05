@@ -190,14 +190,15 @@ private struct TasksWidgetView: View {
                     .frame(width: 22, height: 22)
             }
             .accessibilityLabel("Open Orbit live voice")
-            Link(destination: URL(string: "orbit://tasks/new")!) {
+            Button(intent: OpenOrbitIntent(target: .quickTaskCapture)) {
                 Image(systemName: "plus")
                     .font(.caption.weight(.heavy))
                     .foregroundStyle(Color.white)
                     .frame(width: 24, height: 24)
                     .background(OrbitWidgetTheme.brandGradient, in: Circle())
             }
-            .accessibilityLabel("Add To Do")
+            .buttonStyle(.plain)
+            .accessibilityLabel("Quick add To Do")
         }
     }
 
@@ -546,7 +547,7 @@ struct OrbitVoiceControl: ControlWidget {
 
     var body: some ControlWidgetConfiguration {
         StaticControlConfiguration(kind: Self.kind) {
-            ControlWidgetButton(action: OpenOrbitVoiceIntent()) {
+            ControlWidgetButton(action: OpenOrbitIntent()) {
                 Label("Orbit Voice", systemImage: "waveform.and.mic")
             }
         }

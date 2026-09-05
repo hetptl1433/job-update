@@ -241,6 +241,10 @@ final class IncomeWireModelTests: XCTestCase {
             try decoder.decode(IncomeAmountBasis.self, from: jsonString("unclear")),
             .observedNetDeposit
         )
+        XCTAssertEqual(
+            try decoder.decode(IncomeDecisionSource.self, from: jsonString("futureAgent")),
+            .unknown
+        )
     }
 
     func testOverviewDecodesBackendJSONContractWithDecimalMoney() throws {
@@ -271,6 +275,7 @@ final class IncomeWireModelTests: XCTestCase {
                   "active": true,
                   "confidence": 0.98,
                   "userConfirmed": true,
+                  "decisionSource": "user",
                   "thisMonth": 3680.50,
                   "yearToDate": 29444,
                   "transactionCount": 16,
@@ -298,6 +303,7 @@ final class IncomeWireModelTests: XCTestCase {
                   "confidence": 0.98,
                   "classificationReason": "Recurring employer deposit",
                   "userConfirmed": true,
+                  "decisionSource": "user",
                   "classification": "income",
                   "basis": "observedNetDeposit"
                 }
@@ -316,6 +322,23 @@ final class IncomeWireModelTests: XCTestCase {
                   "classificationReason": "Ambiguous peer payment",
                   "userConfirmed": false,
                   "classification": "needsReview"
+                }
+              ],
+              "excludedTransactions": [
+                {
+                  "id": "transaction-3",
+                  "accountID": "account-1",
+                  "date": "2026-08-07",
+                  "name": "ACCOUNT TRANSFER",
+                  "amount": 500,
+                  "direction": "inflow",
+                  "pending": false,
+                  "currencyCode": "USD",
+                  "confidence": 0.93,
+                  "classificationReason": "The matching activity indicates an account transfer.",
+                  "userConfirmed": false,
+                  "decisionSource": "ai",
+                  "classification": "notIncome"
                 }
               ],
               "projectedMonthEnd": 6620.25,
@@ -354,7 +377,11 @@ final class IncomeWireModelTests: XCTestCase {
         XCTAssertEqual(summary.sources.first?.averagePayment, decimal("1840.25"))
         XCTAssertEqual(summary.confirmedTransactions.first?.amountBasis, .observedNetDeposit)
         XCTAssertEqual(summary.confirmedTransactions.first?.classification, .income)
+        XCTAssertEqual(summary.confirmedTransactions.first?.decisionSource, .user)
         XCTAssertEqual(summary.needsReviewTransactions.first?.classification, .needsReview)
+        XCTAssertEqual(summary.excludedTransactions?.first?.classification, .notIncome)
+        XCTAssertEqual(summary.excludedTransactions?.first?.decisionSource, .ai)
+        XCTAssertEqual(summary.excludedTransactions?.first?.amount, 500)
         XCTAssertEqual(summary.expectedPaychecks.first?.estimatedAmount, decimal("1840.25"))
         XCTAssertEqual(summary.coverage?.completeMonths, 7)
         XCTAssertEqual(summary.confirmedLast12Months, decimal("5110.25"))
@@ -422,6 +449,64 @@ final class IncomeWireModelTests: XCTestCase {
         XCTAssertEqual(object["type"], "other")
         XCTAssertEqual(object["asOfDate"], "2026-08-09")
         XCTAssertEqual(object["timeZone"], "America/Indiana/Indianapolis")
+    }
+
+    func testAIClassificationRequestEncodesDecisionProvenance() throws {
+        let request = IncomeClassificationRequest(
+            classification: .income,
+            sourceName: "Northstar",
+            type: .contract,
+            asOfDate: "2026-08-09",
+            timeZone: "UTC",
+            decisionSource: .ai,
+            confidence: 0.88,
+            reason: "Repeated client deposits are consistent with contract income."
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(object["decisionSource"] as? String, "ai")
+        XCTAssertEqual(object["confidence"] as? Double, 0.88)
+        XCTAssertEqual(
+            object["reason"] as? String,
+            "Repeated client deposits are consistent with contract income."
+        )
+    }
+
+    func testIncomeAIReviewLedgerDeduplicatesAndKeepsNewestEntries() {
+        var ledger = IncomeAIReviewLedger()
+        ledger.record(
+            [
+                IncomeAITransactionSuggestion(
+                    transactionID: "older",
+                    classification: .needsReview,
+                    sourceName: "Older",
+                    sourceType: .other,
+                    confidence: 2,
+                    reason: "Uncertain."
+                )
+            ],
+            reviewedAt: Date(timeIntervalSince1970: 10)
+        )
+        ledger.record(
+            [
+                IncomeAITransactionSuggestion(
+                    transactionID: "newer",
+                    classification: .income,
+                    sourceName: "Newer",
+                    sourceType: .salary,
+                    confidence: 0.9,
+                    reason: "Recurring payroll deposit."
+                )
+            ],
+            reviewedAt: Date(timeIntervalSince1970: 20),
+            maximumEntries: 1
+        )
+
+        XCTAssertFalse(ledger.contains(transactionID: "older"))
+        XCTAssertTrue(ledger.contains(transactionID: "newer"))
+        XCTAssertEqual(ledger.entriesByTransactionID["newer"]?.confidence, 0.9)
     }
 }
 
@@ -678,6 +763,7 @@ final class FinanceSpendingAnalysisTests: XCTestCase {
             name: "MYSTERY BOOK CLUB"
         )
         let key = FinanceCategoryName.merchantKey(for: value)
+        let recurrenceKey = FinanceCategoryName.recurrenceKey(for: value)
         var memory = FinanceCategoryMemory()
         memory.remember([
             FinanceMerchantCategoryRule(
@@ -686,7 +772,10 @@ final class FinanceSpendingAnalysisTests: XCTestCase {
                 confidence: 0.88,
                 reason: "The merchant appears to be a book service.",
                 source: .ai,
-                learnedAt: .now
+                learnedAt: .now,
+                recurrenceKey: recurrenceKey,
+                recurringSuggestion: .uncertain,
+                recurringConfidence: 0.45
             )
         ])
 
@@ -722,6 +811,72 @@ final class FinanceSpendingAnalysisTests: XCTestCase {
 
         XCTAssertEqual(categorized.possibleSubscriptions.count, 1)
         XCTAssertEqual(categorized.possibleSubscriptions.first?.category, "Subscriptions")
+        XCTAssertEqual(categorized.detectedMonthlyRecurringTotal, 0, accuracy: 0.001)
+    }
+
+    func testConfidentAIRecurringDecisionIsOrganizedAutomatically() throws {
+        let value = transaction(
+            id: "ai-recurring-plan",
+            date: "2026-08-22",
+            category: "Other",
+            amount: 24,
+            name: "NORTHSTAR MONTHLY MEMBERSHIP"
+        )
+        let recurrenceKey = FinanceCategoryName.recurrenceKey(for: value)
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: FinanceCategoryName.merchantKey(for: value),
+                category: .subscriptions,
+                confidence: 0.9,
+                reason: "The descriptor identifies an ongoing monthly membership.",
+                source: .ai,
+                learnedAt: .now,
+                recurrenceKey: recurrenceKey,
+                recurringSuggestion: .recurring,
+                recurringConfidence: 0.9
+            )
+        ])
+
+        let categorized = memory.applying(to: makeOverview(transactions: [value]))
+        let payment = try XCTUnwrap(categorized.confirmedRecurringPayments.first)
+
+        XCTAssertEqual(payment.detectionSource, .ai)
+        XCTAssertEqual(payment.resolvedStatus, .confirmed)
+        XCTAssertTrue(categorized.possibleSubscriptions.isEmpty)
+        XCTAssertEqual(categorized.detectedMonthlyRecurringTotal, 24, accuracy: 0.001)
+    }
+
+    func testConfidentAINegativeMovesOnlyPossiblePaymentOutOfRecurring() throws {
+        let value = transaction(
+            id: "ai-one-time-plan",
+            date: "2026-08-22",
+            category: "Other",
+            amount: 24,
+            name: "NORTHSTAR SUBSCRIPTION PURCHASE"
+        )
+        let recurrenceKey = FinanceCategoryName.recurrenceKey(for: value)
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: FinanceCategoryName.merchantKey(for: value),
+                category: .shopping,
+                confidence: 0.9,
+                reason: "The descriptor is a one-time subscription-box purchase.",
+                source: .ai,
+                learnedAt: .now,
+                recurrenceKey: recurrenceKey,
+                recurringSuggestion: .notRecurring,
+                recurringConfidence: 0.9
+            )
+        ])
+
+        let categorized = memory.applying(to: makeOverview(transactions: [value]))
+        let ignored = try XCTUnwrap(categorized.ignoredRecurringPayments.first)
+
+        XCTAssertTrue(categorized.detectedRecurringPayments.isEmpty)
+        XCTAssertEqual(ignored.detectionSource, .ai)
+        XCTAssertFalse(ignored.isConfirmed)
         XCTAssertEqual(categorized.detectedMonthlyRecurringTotal, 0, accuracy: 0.001)
     }
 
@@ -770,6 +925,328 @@ final class FinanceSpendingAnalysisTests: XCTestCase {
         XCTAssertEqual(overview.confirmedRecurringPayments.first?.name, "OpenAI")
         XCTAssertEqual(overview.confirmedRecurringPayments.first?.cadence, .monthly)
         XCTAssertEqual(overview.detectedMonthlyRecurringTotal, 20, accuracy: 0.001)
+    }
+
+    func testUserCategoryOverridesKnownMerchantAndAutomaticRestoresProviderBehavior() throws {
+        let value = transaction(
+            id: "restaurant",
+            date: "2026-08-20",
+            category: "Restaurants",
+            amount: 42,
+            name: "DOORDASH *LOCAL RESTAURANT"
+        )
+        var memory = FinanceCategoryMemory()
+
+        memory.setUserCategory(.business, for: value)
+        let ownerCategorized = memory.applying(to: makeOverview(transactions: [value]))
+        let ownerTransaction = try XCTUnwrap(ownerCategorized.recentTransactions.first)
+
+        XCTAssertEqual(ownerTransaction.category, "Business")
+        XCTAssertEqual(ownerTransaction.displayCategory, "Business")
+        XCTAssertEqual(ownerTransaction.categorySource, .user)
+        XCTAssertEqual(ownerTransaction.providerBaseCategory, "Restaurants")
+
+        memory.setAutomaticCategory(for: ownerTransaction)
+        let automatic = memory.applying(to: ownerCategorized)
+        let automaticTransaction = try XCTUnwrap(automatic.recentTransactions.first)
+
+        XCTAssertEqual(automaticTransaction.category, "Food And Drink")
+        XCTAssertEqual(automaticTransaction.categorySource, .merchantRule)
+        XCTAssertEqual(automaticTransaction.providerBaseCategory, "Restaurants")
+        XCTAssertEqual(memory.userCategoryRuleCount, 0)
+    }
+
+    func testConfidentAIIsTheFirstAutomaticCategoryDecision() {
+        let value = transaction(
+            id: "ai-first",
+            date: "2026-08-20",
+            category: "Restaurants",
+            amount: 42,
+            name: "DOORDASH *CLIENT MEETING"
+        )
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: FinanceCategoryName.merchantKey(for: value),
+                category: .business,
+                confidence: 0.91,
+                reason: "The charge appears to be a business meal.",
+                source: .ai,
+                learnedAt: .now,
+                recurrenceKey: FinanceCategoryName.recurrenceKey(for: value),
+                recurringSuggestion: .notRecurring,
+                recurringConfidence: 0.9
+            )
+        ])
+
+        let categorized = memory.applying(to: makeOverview(transactions: [value]))
+
+        XCTAssertEqual(categorized.recentTransactions.first?.displayCategory, "Business")
+        XCTAssertEqual(categorized.recentTransactions.first?.categorySource, .ai)
+        XCTAssertEqual(categorized.recentTransactions.first?.providerBaseCategory, "Restaurants")
+    }
+
+    func testLowConfidenceAICategoryFallsBackToDeterministicOrganization() {
+        let value = transaction(
+            id: "low-confidence",
+            date: "2026-08-20",
+            category: "Restaurants",
+            amount: 42,
+            name: "DOORDASH *LOCAL RESTAURANT"
+        )
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: FinanceCategoryName.merchantKey(for: value),
+                category: .business,
+                confidence: 0.4,
+                reason: "The purpose is uncertain.",
+                source: .ai,
+                learnedAt: .now
+            )
+        ])
+
+        let categorized = memory.applying(to: makeOverview(transactions: [value]))
+
+        XCTAssertEqual(categorized.recentTransactions.first?.displayCategory, "Food And Drink")
+        XCTAssertEqual(categorized.recentTransactions.first?.categorySource, .merchantRule)
+    }
+
+    func testCurrencyScopedAIResultsChooseMerchantCategoryDeterministically() {
+        let value = transaction(
+            id: "multi-currency",
+            date: "2026-08-20",
+            category: "Other",
+            amount: 42,
+            name: "NORTHSTAR SERVICES"
+        )
+        let merchantKey = FinanceCategoryName.merchantKey(for: value)
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: merchantKey,
+                category: .business,
+                confidence: 0.82,
+                reason: "Business services.",
+                source: .ai,
+                learnedAt: .now,
+                recurrenceKey: "USD|northstar services",
+                recurringSuggestion: .uncertain,
+                recurringConfidence: 0.5
+            ),
+            FinanceMerchantCategoryRule(
+                merchantKey: merchantKey,
+                category: .travel,
+                confidence: 0.94,
+                reason: "Travel services.",
+                source: .ai,
+                learnedAt: .now,
+                recurrenceKey: "EUR|northstar services",
+                recurringSuggestion: .notRecurring,
+                recurringConfidence: 0.85
+            )
+        ])
+
+        XCTAssertEqual(memory.rulesByMerchant[merchantKey]?.category, .travel)
+        XCTAssertNotNil(memory.recurrenceAnalysesByKey["USD|northstar services"])
+        XCTAssertNotNil(memory.recurrenceAnalysesByKey["EUR|northstar services"])
+    }
+
+    func testAutomaticCategoryRevealsEarlierAIChoiceWithoutLosingProviderBase() throws {
+        let value = transaction(
+            id: "book-club",
+            date: "2026-08-20",
+            category: "Other",
+            amount: 28,
+            name: "MYSTERY BOOK CLUB"
+        )
+        let merchantKey = FinanceCategoryName.merchantKey(for: value)
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: merchantKey,
+                category: .education,
+                confidence: 0.88,
+                reason: "The merchant appears to be a book service.",
+                source: .ai,
+                learnedAt: .now
+            )
+        ])
+        memory.setUserCategory(.shopping, for: value)
+
+        let ownerCategorized = memory.applying(to: makeOverview(transactions: [value]))
+        XCTAssertEqual(ownerCategorized.recentTransactions.first?.category, "Shopping")
+        XCTAssertEqual(ownerCategorized.recentTransactions.first?.providerBaseCategory, "Other")
+
+        memory.setAutomaticCategory(for: try XCTUnwrap(ownerCategorized.recentTransactions.first))
+        let automatic = memory.applying(to: ownerCategorized)
+
+        XCTAssertEqual(automatic.recentTransactions.first?.category, "Education")
+        XCTAssertEqual(automatic.recentTransactions.first?.categorySource, .ai)
+        XCTAssertEqual(automatic.recentTransactions.first?.providerBaseCategory, "Other")
+    }
+
+    func testLegacyCategoryOnlyMemoryDecodesAndRequestsMissingRecurrenceAnalysis() throws {
+        let json = #"""
+        {
+          "version": 1,
+          "rulesByMerchant": {
+            "mystery book club": {
+              "merchantKey": "mystery book club",
+              "category": "Education",
+              "confidence": 0.88,
+              "reason": "Legacy category-only rule.",
+              "source": "ai",
+              "learnedAt": 0
+            }
+          }
+        }
+        """#
+        let memory = try JSONDecoder().decode(FinanceCategoryMemory.self, from: Data(json.utf8))
+        let value = transaction(
+            id: "legacy",
+            date: "2026-08-20",
+            category: "Other",
+            amount: 28,
+            name: "MYSTERY BOOK CLUB"
+        )
+        let overview = memory.applying(to: makeOverview(transactions: [value]))
+        let samples = memory.unclassifiedSamples(in: overview)
+
+        XCTAssertEqual(memory.learnedRuleCount, 1)
+        XCTAssertTrue(memory.recurrenceAnalysesByKey.isEmpty)
+        XCTAssertEqual(overview.recentTransactions.first?.category, "Education")
+        XCTAssertEqual(samples.count, 1)
+        XCTAssertEqual(samples.first?.recurrenceKey, "USD|mystery book club")
+    }
+
+    func testAISamplingIncludesCategorizedMerchantUntilRecurrenceWasAnalyzed() {
+        let value = transaction(
+            id: "airline",
+            date: "2026-08-20",
+            category: "Travel",
+            amount: 310,
+            name: "ACME AIRLINES"
+        )
+        var memory = FinanceCategoryMemory()
+        let before = memory.unclassifiedSamples(in: makeOverview(transactions: [value]))
+
+        XCTAssertEqual(before.count, 1)
+        XCTAssertEqual(before.first?.providerCategory, "Travel")
+
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: FinanceCategoryName.merchantKey(for: value),
+                category: .travel,
+                confidence: 0.96,
+                reason: "An airline purchase with no recurring evidence.",
+                source: .ai,
+                learnedAt: .now,
+                recurrenceKey: FinanceCategoryName.recurrenceKey(for: value),
+                recurringSuggestion: .uncertain,
+                recurringConfidence: 0.42
+            )
+        ])
+
+        XCTAssertTrue(memory.unclassifiedSamples(in: makeOverview(transactions: [value])).isEmpty)
+        XCTAssertEqual(
+            memory.recurrenceAnalysesByKey["USD|acme airlines"]?.suggestion,
+            .uncertain
+        )
+    }
+
+    func testRecurrenceKeysNormalizeMerchantButRemainCurrencyScoped() {
+        let usd = transaction(
+            id: "usd",
+            date: "2026-08-20",
+            category: "Other",
+            amount: 20,
+            name: "OPENAI *CHATGPT SUBSCRIPTION 8392"
+        )
+        let eur = transaction(
+            id: "eur",
+            date: "2026-08-20",
+            category: "Other",
+            amount: 20,
+            currencyCode: "eur",
+            name: "ChatGPT recurring payment"
+        )
+
+        XCTAssertEqual(FinanceCategoryName.recurrenceKey(for: usd), "USD|openai")
+        XCTAssertEqual(FinanceCategoryName.recurrenceKey(for: eur), "EUR|openai")
+        XCTAssertNotEqual(
+            FinanceCategoryName.recurrenceKey(for: usd),
+            FinanceCategoryName.recurrenceKey(for: eur)
+        )
+    }
+
+    func testFreshCadenceBeatsStaleAINegativeWhileOwnerStillWins() throws {
+        let transactions = [
+            transaction(
+                id: "service-june",
+                date: "2026-06-01",
+                category: "Bills And Utilities",
+                amount: 40,
+                name: "ACME SERVICE"
+            ),
+            transaction(
+                id: "service-july",
+                date: "2026-07-01",
+                category: "Bills And Utilities",
+                amount: 40,
+                name: "ACME SERVICE"
+            ),
+            transaction(
+                id: "service-august",
+                date: "2026-08-01",
+                category: "Bills And Utilities",
+                amount: 40,
+                name: "ACME SERVICE"
+            )
+        ]
+        let original = makeOverview(transactions: transactions)
+        let detectorPayment = try XCTUnwrap(original.detectedRecurringPayments.first)
+
+        XCTAssertEqual(detectorPayment.detectionSource, .history)
+        XCTAssertTrue(original.ignoredRecurringPayments.isEmpty)
+
+        let recurrenceKey = FinanceCategoryName.recurrenceKey(for: transactions[0])
+        var memory = FinanceCategoryMemory()
+        memory.remember([
+            FinanceMerchantCategoryRule(
+                merchantKey: FinanceCategoryName.merchantKey(for: transactions[0]),
+                category: .billsAndUtilities,
+                confidence: 0.95,
+                reason: "AI found evidence this was not an ongoing payment.",
+                source: .ai,
+                learnedAt: .now,
+                recurrenceKey: recurrenceKey,
+                recurringSuggestion: .notRecurring,
+                recurringConfidence: 0.91
+            )
+        ])
+        let aiApplied = memory.applying(to: original)
+
+        XCTAssertEqual(aiApplied.detectedRecurringPayments.count, 1)
+        XCTAssertTrue(aiApplied.ignoredRecurringPayments.isEmpty)
+        XCTAssertEqual(aiApplied.detectedRecurringPayments.first?.detectionSource, .history)
+
+        memory.setRecurringDecision(.notRecurring, for: transactions[0])
+        let ownerApplied = memory.applying(to: original)
+
+        XCTAssertEqual(memory.recurringDecision(for: transactions[0]), .notRecurring)
+        XCTAssertTrue(ownerApplied.detectedRecurringPayments.isEmpty)
+        XCTAssertEqual(ownerApplied.ignoredRecurringPayments.first?.detectionSource, .user)
+        XCTAssertEqual(ownerApplied.detectedMonthlyRecurringTotal, 0, accuracy: 0.001)
+
+        memory.setRecurringDecision(.automatic, for: transactions[0])
+        let automatic = memory.applying(to: original)
+
+        XCTAssertEqual(memory.recurringDecision(for: transactions[0]), .automatic)
+        XCTAssertNil(memory.recurringDecisionsByKey[recurrenceKey])
+        XCTAssertEqual(automatic.detectedRecurringPayments.count, 1)
+        XCTAssertTrue(automatic.ignoredRecurringPayments.isEmpty)
+        XCTAssertEqual(automatic.detectedRecurringPayments.first?.detectionSource, .history)
     }
 
     private var utcCalendar: Calendar {
@@ -1049,6 +1526,76 @@ final class UnifiedToDoMigrationTests: XCTestCase {
         let result = SharedTaskStore.merging([task], with: [reminder])
 
         XCTAssertEqual(result, [task])
+    }
+
+    func testSharedTaskStoreReportsSuccessfulWriteAndReadsItBack() throws {
+        let suiteName = "com.hetpatel.jobradar.tests.tasks.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let task = TaskItem(title: "Send follow-up")
+
+        XCTAssertTrue(SharedTaskStore.save([task], to: defaults))
+        XCTAssertEqual(SharedTaskStore.load(from: defaults), [task])
+    }
+
+    func testSharedTaskCompletionIsIdempotent() throws {
+        let suiteName = "com.hetpatel.jobradar.tests.completion.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let id = UUID()
+        let task = TaskItem(
+            id: id,
+            title: "Submit application",
+            updatedAt: Date(timeIntervalSince1970: 1_786_435_200)
+        )
+        XCTAssertTrue(SharedTaskStore.save([task], to: defaults))
+
+        XCTAssertTrue(SharedTaskStore.setCompletion(
+            id: id,
+            isCompleted: true,
+            defaults: defaults
+        ))
+        let firstCompletion = try XCTUnwrap(SharedTaskStore.load(from: defaults).first)
+        XCTAssertTrue(firstCompletion.isCompleted)
+
+        XCTAssertTrue(SharedTaskStore.setCompletion(
+            id: id,
+            isCompleted: true,
+            defaults: defaults
+        ))
+        let repeatedCompletion = try XCTUnwrap(SharedTaskStore.load(from: defaults).first)
+        XCTAssertTrue(repeatedCompletion.isCompleted)
+        XCTAssertEqual(repeatedCompletion.updatedAt, firstCompletion.updatedAt)
+    }
+
+    func testLegacyReminderCompletionIsIdempotent() throws {
+        let suiteName = "com.hetpatel.jobradar.tests.reminders.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let id = UUID()
+        let reminder = ReminderItem(
+            id: id,
+            title: "Legacy reminder",
+            updatedAt: Date(timeIntervalSince1970: 1_786_435_200)
+        )
+        XCTAssertTrue(SharedReminderStore.save([reminder], to: defaults))
+
+        XCTAssertTrue(SharedReminderStore.setCompletion(
+            id: id,
+            isCompleted: true,
+            defaults: defaults
+        ))
+        let firstCompletion = try XCTUnwrap(SharedReminderStore.load(from: defaults).first)
+        XCTAssertTrue(firstCompletion.isCompleted)
+
+        XCTAssertTrue(SharedReminderStore.setCompletion(
+            id: id,
+            isCompleted: true,
+            defaults: defaults
+        ))
+        let repeatedCompletion = try XCTUnwrap(SharedReminderStore.load(from: defaults).first)
+        XCTAssertTrue(repeatedCompletion.isCompleted)
+        XCTAssertEqual(repeatedCompletion.updatedAt, firstCompletion.updatedAt)
     }
 }
 

@@ -290,6 +290,9 @@ export async function saveIncomeClassification(userSub, transaction, value, exis
     classification: value.classification,
     sourceName: value.sourceName,
     sourceType: value.sourceType,
+    decisionSource: value.decisionSource ?? "user",
+    confidence: value.confidence,
+    reason: value.reason,
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp
   };
@@ -308,7 +311,22 @@ export async function saveIncomeClassification(userSub, transaction, value, exis
             }
           }
         },
-        { Put: { TableName: tableName(), Item: item } }
+        {
+          Put: {
+            TableName: tableName(),
+            Item: item,
+            // An AI refresh can create or revise an AI decision, but cannot
+            // replace an explicit user choice. A record without decisionSource
+            // is a legacy user decision and receives the same protection.
+            ConditionExpression: ":incomingSource = :user OR attribute_not_exists(PK) OR #decisionSource = :ai",
+            ExpressionAttributeNames: { "#decisionSource": "decisionSource" },
+            ExpressionAttributeValues: {
+              ":incomingSource": item.decisionSource,
+              ":user": "user",
+              ":ai": "ai"
+            }
+          }
+        }
       ]
     }));
   } catch (error) {

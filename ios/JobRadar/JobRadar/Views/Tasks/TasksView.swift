@@ -281,6 +281,12 @@ struct TasksView: View {
                         onToggle: { complete(item) },
                         isCompleting: completingTaskIDs.contains(item.id)
                     )
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity,
+                            removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .leading))
+                        )
+                    )
                     .contentShape(Rectangle())
                     .onTapGesture { editing = item }
                     .listRowInsets(EdgeInsets(
@@ -437,17 +443,22 @@ struct TasksView: View {
             _ = completingTaskIDs.insert(item.id)
         }
 
-        let delay = reduceMotion ? 0 : 0.24
+        let delay = reduceMotion ? 0 : 0.28
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            completingTaskIDs.remove(item.id)
             guard let current = tasks.tasks.first(where: { $0.id == item.id }),
-                  !current.isCompleted else { return }
+                  !current.isCompleted else {
+                completingTaskIDs.remove(item.id)
+                return
+            }
             let didComplete = withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                 tasks.setCompletion(current.id, isCompleted: true)
             }
             if didComplete {
                 successFeedback += 1
                 presentUndo(.completed(item))
+            }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                _ = completingTaskIDs.remove(item.id)
             }
         }
     }
@@ -632,17 +643,12 @@ struct TaskRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-            Button(action: onToggle) {
-                Image(systemName: item.isCompleted || isCompleting ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(item.isCompleted || isCompleting ? AppTheme.success : AppTheme.primaryText)
-                    .font(.title3)
-                    .scaleEffect(isCompleting ? 1.2 : 1)
-            }
-            .buttonStyle(.plain)
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
-            .disabled(isCompleting)
-            .accessibilityLabel(item.isCompleted ? "Mark \(item.title) incomplete" : "Complete \(item.title)")
+            TaskCompletionControl(
+                title: item.title,
+                isCompleted: item.isCompleted,
+                isCompleting: isCompleting,
+                onToggle: onToggle
+            )
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(.subheadline.weight(.medium))
@@ -664,11 +670,12 @@ struct TaskRow: View {
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
             }
+            .opacity(isCompleting ? 0.48 : 1)
+            .offset(x: isCompleting && !reduceMotion ? 3 : 0)
             Spacer()
         }
         .padding(.vertical, AppTheme.Spacing.sm)
         .frame(minHeight: 58)
-        .opacity(isCompleting ? 0.72 : 1)
         .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.68), value: isCompleting)
     }
 
@@ -698,6 +705,97 @@ struct TaskRow: View {
             )
             .labelStyle(.iconOnly)
         }
+    }
+}
+
+/// Shared by the Home and full To Do lists so completion always has the same
+/// immediate visual acknowledgement before the row is removed.
+struct TaskCompletionControl: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let title: String
+    let isCompleted: Bool
+    let isCompleting: Bool
+    var idleColor = AppTheme.primaryText
+    var iconFont: Font = .title3
+    let onToggle: () -> Void
+
+    private var showsCheckmark: Bool { isCompleted || isCompleting }
+
+    var body: some View {
+        Button(action: onToggle) {
+            ZStack {
+                if !reduceMotion {
+                    CompletionBurst(isActive: isCompleting)
+                }
+
+                Image(systemName: showsCheckmark ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(showsCheckmark ? AppTheme.success : idleColor)
+                    .font(iconFont)
+                    .scaleEffect(isCompleting && !reduceMotion ? 1.18 : 1)
+                    .symbolEffect(.bounce, value: isCompleting && !reduceMotion)
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isCompleting)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(isCompleting ? "Saving completion" : "")
+    }
+
+    private var accessibilityLabel: String {
+        if isCompleting { return "Completing \(title)" }
+        return isCompleted ? "Mark \(title) incomplete" : "Complete \(title)"
+    }
+}
+
+private struct CompletionBurst: View {
+    let isActive: Bool
+
+    @State private var raysVisible = false
+    @State private var raysExpanded = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<8, id: \.self) { index in
+                Capsule()
+                    .fill(color(for: index))
+                    .frame(width: 2.5, height: index.isMultiple(of: 2) ? 6 : 4)
+                    .offset(y: raysExpanded ? -21 : -9)
+                    .rotationEffect(.degrees(Double(index) * 45))
+                    .opacity(raysVisible ? 1 : 0)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .task(id: isActive) {
+            guard isActive else {
+                raysVisible = false
+                raysExpanded = false
+                return
+            }
+
+            raysExpanded = false
+            raysVisible = true
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.28)) {
+                raysExpanded = true
+            }
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.14)) {
+                raysVisible = false
+            }
+        }
+    }
+
+    private func color(for index: Int) -> Color {
+        if index.isMultiple(of: 4) { return AppTheme.coral }
+        if index.isMultiple(of: 3) { return AppTheme.warning }
+        return AppTheme.success
     }
 }
 
@@ -818,5 +916,138 @@ struct TaskEditor: View {
                 }
             }
         }
+    }
+}
+
+/// A title-only capture surface for widget and Home shortcuts. WidgetKit can't
+/// host text input, so this is intentionally the first and only app UI shown
+/// after the quick-add deep link.
+struct QuickTaskCaptureView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @EnvironmentObject private var tasks: TaskRepository
+
+    @State private var title = ""
+    @State private var saveError: String?
+    @State private var successFeedback = 0
+    @State private var isSaving = false
+    @FocusState private var titleFocused: Bool
+
+    private var trimmedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
+            header
+
+            TextField(
+                "",
+                text: $title,
+                prompt: Text("What needs to be done?")
+                    .foregroundStyle(AppTheme.secondaryText)
+            )
+                .focused($titleFocused)
+                .submitLabel(.done)
+                .textInputAutocapitalization(.sentences)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(AppTheme.primaryText)
+                .padding(.horizontal, AppTheme.Spacing.lg)
+                .frame(minHeight: 58)
+                .background(
+                    AppTheme.secondarySurface,
+                    in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                        .strokeBorder(titleFocused ? AppTheme.brand : AppTheme.border, lineWidth: 1)
+                }
+                .onSubmit(save)
+                .onChange(of: title) { _, _ in saveError = nil }
+                .accessibilityLabel("To Do title")
+                .accessibilityHint("Enter a title, then press Done to save")
+
+            if let saveError {
+                Label(saveError, systemImage: "exclamationmark.circle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(AppTheme.destructive)
+                    .accessibilityLabel("Error. \(saveError)")
+            } else {
+                Text("Saved instantly without a due date. You can add details later.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button(action: save) {
+                Label("Add To Do", systemImage: "checkmark")
+            }
+            .buttonStyle(PrimaryButtonStyle())
+            .disabled(trimmedTitle.isEmpty || isSaving)
+            .opacity(trimmedTitle.isEmpty || isSaving ? 0.45 : 1)
+            .accessibilityHint("Saves this item and closes Quick Add")
+        }
+        .padding(.horizontal, AppTheme.Spacing.xl)
+        .padding(.top, AppTheme.Spacing.xl)
+        .padding(.bottom, AppTheme.Spacing.lg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(AppTheme.background.ignoresSafeArea())
+        .presentationDetents([dynamicTypeSize.isAccessibilitySize ? .large : .height(330)])
+        .presentationBackground(AppTheme.background)
+        .presentationDragIndicator(.hidden)
+        .presentationCornerRadius(30)
+        .sensoryFeedback(.success, trigger: successFeedback)
+        .onAppear { titleFocused = true }
+        .task {
+            await Task.yield()
+            titleFocused = true
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            guard !Task.isCancelled else { return }
+            titleFocused = true
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: AppTheme.Spacing.md) {
+            Image(systemName: "bolt.fill")
+                .font(.body.weight(.bold))
+                .foregroundStyle(AppTheme.onBrand)
+                .frame(width: 42, height: 42)
+                .background(AppTheme.brandGradient, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Quick To Do")
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.primaryText)
+                Text("Type it, press Done, and move on.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+
+            Spacer(minLength: AppTheme.Spacing.sm)
+
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .frame(width: 36, height: 36)
+                    .background(AppTheme.secondarySurface, in: Circle())
+                    .overlay(Circle().strokeBorder(AppTheme.border, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Cancel Quick Add")
+        }
+    }
+
+    private func save() {
+        guard !trimmedTitle.isEmpty, !isSaving else { return }
+        isSaving = true
+        guard tasks.add(TaskItem(title: trimmedTitle)) else {
+            isSaving = false
+            saveError = "Couldn’t save this To Do. Please try again."
+            return
+        }
+        successFeedback += 1
+        dismiss()
     }
 }

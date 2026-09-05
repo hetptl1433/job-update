@@ -1,18 +1,19 @@
 import Charts
 import SwiftUI
 
-/// Dedicated earned-income experience. All totals arrive from Orbit's
-/// deterministic backend classifier; this view never equates a generic inflow
-/// with income. AI can optionally suggest a review decision, but never writes
-/// it or performs the authoritative arithmetic.
+/// Dedicated earned-income experience. Orbit combines hard accounting guards,
+/// provider evidence, and an optional AI organization pass; user corrections
+/// always remain the final authority.
 struct IncomeView: View {
     @EnvironmentObject private var finance: FinanceRepository
+    @AppStorage("orbit.ai.financeAutoOrganizeEnabled") private var autoOrganizeWithAI = false
 
     @State private var selectedCurrencyCode = ""
     @State private var historyRange = IncomeHistoryRange.oneYear
     @State private var transactionToReview: IncomeTransaction?
     @State private var goal = StoredIncomeGoal.zero
     @State private var showingGoalEditor = false
+    @State private var showingOtherDeposits = false
 
     var body: some View {
         ScrollView {
@@ -93,10 +94,13 @@ struct IncomeView: View {
         return Group {
             if let summary {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                    aiOrganizationStatus(summary)
                     currencySelector(overview)
                     observedSummary(summary)
                     reviewSection(summary)
                     sourcesSection(summary)
+                    confirmedDepositsSection(summary)
+                    excludedDepositsSection(summary)
                     historySection(summary)
                     projectionSection(summary)
                     goalSection(summary)
@@ -112,6 +116,38 @@ struct IncomeView: View {
             if !selected, let first = overview.summaries.first {
                 selectCurrency(first.currencyCode)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func aiOrganizationStatus(_ summary: IncomeCurrencySummary) -> some View {
+        if finance.isAutoSortingIncome {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Orbit AI is sorting new deposits")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Income, transfers, and other deposits will move into place automatically.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                Spacer()
+            }
+            .cardSurface(padding: AppTheme.Spacing.md)
+        } else if let message = finance.incomeOrganizationMessage {
+            HStack(alignment: .top, spacing: AppTheme.Spacing.sm) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(AppTheme.brand)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                Spacer(minLength: AppTheme.Spacing.sm)
+                if autoOrganizeWithAI, !summary.needsReviewTransactions.isEmpty {
+                    Button("Retry") { finance.organizeIncomeWithAI(force: true) }
+                        .font(.caption.weight(.semibold))
+                }
+            }
+            .cardSurface(padding: AppTheme.Spacing.md)
         }
     }
 
@@ -255,6 +291,7 @@ struct IncomeView: View {
                     }
                 }
                 .cardSurface(padding: 0)
+                .animation(.snappy(duration: 0.32), value: summary.needsReviewTransactions.map(\.id))
             }
         }
     }
@@ -280,6 +317,74 @@ struct IncomeView: View {
                 }
                 .cardSurface(padding: 0)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func confirmedDepositsSection(_ summary: IncomeCurrencySummary) -> some View {
+        if !summary.confirmedTransactions.isEmpty {
+            let visible = Array(summary.confirmedTransactions.prefix(20))
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+                SectionHeader(title: "Sorted income deposits")
+                Text("Tap any deposit to correct Orbit and move it out of Income. Your choice is remembered for matching future deposits.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                VStack(spacing: 0) {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, transaction in
+                        Button {
+                            transactionToReview = transaction
+                        } label: {
+                            IncomeReviewRow(transaction: transaction, isConfirmed: true)
+                        }
+                        .buttonStyle(.plain)
+                        if index < visible.count - 1 {
+                            Divider().overlay(AppTheme.separator)
+                        }
+                    }
+                }
+                .cardSurface(padding: 0)
+                .animation(.snappy(duration: 0.32), value: visible.map(\.id))
+
+                if summary.confirmedTransactions.count > visible.count {
+                    Text("Showing the 20 most recent income deposits. All deposits remain available in Transactions.")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func excludedDepositsSection(_ summary: IncomeCurrencySummary) -> some View {
+        let transactions = summary.excludedTransactions ?? []
+        if !transactions.isEmpty {
+            DisclosureGroup(isExpanded: $showingOtherDeposits) {
+                VStack(spacing: 0) {
+                    ForEach(Array(transactions.prefix(20).enumerated()), id: \.element.id) { index, transaction in
+                        Button {
+                            transactionToReview = transaction
+                        } label: {
+                            IncomeReviewRow(transaction: transaction, isExcluded: true)
+                        }
+                        .buttonStyle(.plain)
+                        if index < min(transactions.count, 20) - 1 {
+                            Divider().overlay(AppTheme.separator)
+                        }
+                    }
+                }
+                .padding(.top, AppTheme.Spacing.sm)
+                .animation(.snappy(duration: 0.32), value: transactions.map(\.id))
+            } label: {
+                HStack {
+                    Label("Other deposits", systemImage: "tray")
+                    Spacer()
+                    Text("\(transactions.count)")
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+            .tint(AppTheme.primaryText)
+            .cardSurface()
         }
     }
 
@@ -618,20 +723,39 @@ private struct IncomeStatusLine: View {
 
 private struct IncomeReviewRow: View {
     let transaction: IncomeTransaction
+    var isConfirmed = false
+    var isExcluded = false
+
+    private var tint: Color {
+        if isConfirmed { return AppTheme.success }
+        if isExcluded { return AppTheme.secondaryText }
+        return AppTheme.warning
+    }
 
     var body: some View {
         HStack(spacing: AppTheme.Spacing.md) {
-            Image(systemName: transaction.pending ? "clock" : "questionmark")
+            Image(systemName: transaction.pending ? "clock" : (isConfirmed ? "arrow.down.left" : (isExcluded ? "tray" : "questionmark")))
                 .font(.caption.weight(.bold))
-                .foregroundStyle(AppTheme.warning)
+                .foregroundStyle(tint)
                 .frame(width: 32, height: 32)
-                .background(AppTheme.warning.opacity(0.08), in: Circle())
+                .background(tint.opacity(0.08), in: Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(transaction.merchantName ?? transaction.name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                    .lineLimit(1)
-                Text(transaction.classificationReason ?? "Orbit could not confirm this deposit")
+                HStack(spacing: 5) {
+                    Text(transaction.merchantName ?? transaction.name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.primaryText)
+                        .lineLimit(1)
+                    if transaction.decisionSource == .ai {
+                        Tag(text: "AI", tint: AppTheme.brand)
+                    } else if transaction.decisionSource == .user || transaction.userConfirmed {
+                        Tag(text: "You", tint: AppTheme.primaryText)
+                    } else if transaction.decisionSource == .provider {
+                        Tag(text: "Bank", tint: AppTheme.info)
+                    } else if transaction.decisionSource == .deterministicRule {
+                        Tag(text: "Orbit", tint: AppTheme.secondaryText)
+                    }
+                }
+                Text(detail)
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
                     .lineLimit(2)
@@ -653,7 +777,22 @@ private struct IncomeReviewRow: View {
         .padding(AppTheme.Spacing.lg)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityHint("Review whether this deposit is income")
+        .accessibilityHint(
+            isConfirmed
+                ? "Opens controls to move this deposit out of Income"
+                : (isExcluded ? "Opens controls to move this deposit into Income" : "Review whether this deposit is income")
+        )
+    }
+
+    private var detail: String {
+        if isConfirmed {
+            let source = transaction.sourceName ?? transaction.classificationReason
+            return source?.isEmpty == false ? source! : "Sorted as income"
+        }
+        if isExcluded {
+            return transaction.classificationReason ?? "Sorted as another deposit"
+        }
+        return transaction.classificationReason ?? "Orbit could not confirm this deposit"
     }
 }
 
@@ -679,6 +818,16 @@ private struct IncomeSourceRow: View {
                                 .font(.caption)
                                 .foregroundStyle(AppTheme.primaryText)
                                 .accessibilityLabel("User confirmed")
+                        } else if source.decisionSource == .ai {
+                            Image(systemName: "sparkles")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.brand)
+                                .accessibilityLabel("Sorted by AI")
+                        } else if source.decisionSource == .provider {
+                            Image(systemName: "building.columns.fill")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.info)
+                                .accessibilityLabel("Sorted from bank data")
                         }
                     }
                     Text("\(source.type.label) · \(source.frequency.label)")
@@ -722,10 +871,9 @@ private struct IncomeSourceRow: View {
     }
 }
 
-private struct IncomeClassificationSheet: View {
+struct IncomeClassificationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var finance: FinanceRepository
-    @AppStorage("orbit.ai.financeContextEnabled") private var shareWithAssistant = false
 
     let transaction: IncomeTransaction
 
@@ -735,6 +883,7 @@ private struct IncomeClassificationSheet: View {
     @State private var isAnalyzing = false
     @State private var aiSuggestion: IncomeAISuggestion?
     @State private var errorMessage: String?
+    @State private var analysisTask: Task<Void, Never>?
 
     private var hasOpenAIKey: Bool {
         !(KeychainStore.get(KeychainKeys.openAIKey) ?? "").isEmpty
@@ -754,34 +903,46 @@ private struct IncomeClassificationSheet: View {
                     LabeledContent("Amount", value: incomeMoney(transaction.amount, code: transaction.currencyCode))
                     LabeledContent("Date", value: displayDate(transaction.date))
                     LabeledContent("Status", value: transaction.pending ? "Pending" : "Posted")
+                    if transaction.classification == .income || transaction.classification == .notIncome {
+                        LabeledContent("Current group") {
+                            HStack(spacing: 5) {
+                                Text(transaction.classification == .income ? "Income" : "Other deposit")
+                                if transaction.decisionSource == .ai {
+                                    Tag(text: "AI sorted", tint: AppTheme.brand)
+                                } else if transaction.decisionSource == .user || transaction.userConfirmed {
+                                    Tag(text: "You", tint: AppTheme.primaryText)
+                                } else if transaction.decisionSource == .provider {
+                                    Tag(text: "Bank", tint: AppTheme.info)
+                                } else if transaction.decisionSource == .deterministicRule {
+                                    Tag(text: "Orbit", tint: AppTheme.secondaryText)
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if let reason = transaction.classificationReason, !reason.isEmpty {
-                    Section("Why this needs review") {
+                    Section(reasonSectionTitle) {
                         Text(classificationReasonLabel(reason)).foregroundStyle(AppTheme.secondaryText)
                     }
                 }
 
                 Section {
-                    Toggle("Allow AI transaction review", isOn: $shareWithAssistant)
-
-                    if shareWithAssistant {
-                        if hasOpenAIKey {
-                            Button {
-                                analyzeWithAI()
-                            } label: {
-                                HStack {
-                                    Label("Get AI suggestion", systemImage: "sparkles")
-                                    Spacer()
-                                    if isAnalyzing { ProgressView() }
-                                }
+                    if hasOpenAIKey {
+                        Button {
+                            analyzeWithAI()
+                        } label: {
+                            HStack {
+                                Label(aiSuggestion == nil ? "Get AI suggestion" : "Refresh AI suggestion", systemImage: "sparkles")
+                                Spacer()
+                                if isAnalyzing { ProgressView() }
                             }
-                            .disabled(saving || isAnalyzing)
-                        } else {
-                            Label("Connect OpenAI processing in Settings first.", systemImage: "key")
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.secondaryText)
                         }
+                        .disabled(saving || isAnalyzing)
+                    } else {
+                        Label("Connect OpenAI processing in Settings first.", systemImage: "key")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
                     }
 
                     if let suggestion = aiSuggestion {
@@ -803,7 +964,7 @@ private struct IncomeClassificationSheet: View {
                 } header: {
                     Text("Optional AI suggestion")
                 } footer: {
-                    Text("When enabled, Orbit sends this deposit and up to 40 compact recent inflow summaries to your configured OpenAI model. The suggestion never changes totals until you approve a decision.")
+                    Text("Ask Orbit to analyze a compact deposit summary, then choose below. Automatic sorting is controlled from Finance, and your manual choice always wins.")
                 }
 
                 Section("If this is income") {
@@ -826,28 +987,32 @@ private struct IncomeClassificationSheet: View {
                     } label: {
                         HStack {
                             Spacer()
-                            if saving { ProgressView() } else { Text("Mark as Income Source") }
+                            if saving { ProgressView() } else { Text(transaction.classification == .income ? "Keep in Income" : "Move to Income") }
                             Spacer()
                         }
                     }
-                    .disabled(saving || isAnalyzing || sourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(saving || sourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                    Button("This is not income") {
+                    Button(transaction.classification == .income ? "Move out of Income" : "Keep as Other Deposit") {
                         save(classification: .notIncome)
                     }
-                    .disabled(saving || isAnalyzing)
+                    .disabled(saving)
                 } footer: {
                     Text("Not-income decisions keep transfers, refunds and other deposits out of earnings totals.")
                 }
             }
-            .navigationTitle("Review deposit")
+            .navigationTitle("Organize deposit")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.disabled(saving || isAnalyzing)
+                    Button("Cancel") {
+                        analysisTask?.cancel()
+                        dismiss()
+                    }
+                    .disabled(saving)
                 }
             }
-            .alert("Review deposit", isPresented: Binding(
+            .alert("Organize deposit", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
             )) {
@@ -857,30 +1022,36 @@ private struct IncomeClassificationSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .interactiveDismissDisabled(saving || isAnalyzing)
+        .interactiveDismissDisabled(saving)
+        .onDisappear {
+            analysisTask?.cancel()
+        }
     }
 
     private func analyzeWithAI() {
         guard !isAnalyzing,
-              shareWithAssistant,
               let key = KeychainStore.get(KeychainKeys.openAIKey),
               !key.isEmpty else { return }
         isAnalyzing = true
-        Task {
+        analysisTask = Task {
             do {
                 let suggestion = try await IncomeIntelligence(apiKey: key).suggest(
                     transaction: transaction,
                     transactionHistory: finance.overview?.recentTransactions ?? []
                 )
+                try Task.checkCancellation()
                 aiSuggestion = suggestion
                 if suggestion.classification == .income {
                     sourceName = suggestion.sourceName
                     sourceType = suggestion.sourceType
                 }
+            } catch is CancellationError {
+                // A manual choice or dismissal always takes precedence.
             } catch {
                 errorMessage = error.localizedDescription
             }
             isAnalyzing = false
+            analysisTask = nil
         }
     }
 
@@ -902,6 +1073,14 @@ private struct IncomeClassificationSheet: View {
 
     private func classificationReasonLabel(_ value: String) -> String {
         switch value {
+        case "providerIncomeCategory": "Your financial provider categorized this deposit as income."
+        case "userOverride": "You chose how this deposit should be organized."
+        case "userDescriptorRule": "This matches a deposit description you organized before."
+        case "ownAccountTransfer": "Orbit matched this to a transfer between your own accounts."
+        case "transferCategory": "Your financial provider categorized this as a transfer."
+        case "loanProceeds": "This looks like loan proceeds rather than earned income."
+        case "reimbursement": "This looks like a reimbursement rather than earned income."
+        case "refundOrReversal": "This looks like a refund or reversed charge rather than earned income."
         case "ambiguousTransfer": "A similar transfer could not be matched with enough confidence."
         case "peerToPeer": "Peer-to-peer deposits are not treated as earnings without confirmation."
         case "incomeKeyword": "The description looks income-related, but the provider did not confirm it."
@@ -910,16 +1089,27 @@ private struct IncomeClassificationSheet: View {
         }
     }
 
+    private var reasonSectionTitle: String {
+        if transaction.classification == .income { return "Why this is in Income" }
+        if transaction.classification == .notIncome { return "Why this is outside Income" }
+        return "Why this needs review"
+    }
+
     private func save(classification: IncomeClassification) {
         guard !saving else { return }
+        analysisTask?.cancel()
+        analysisTask = nil
+        isAnalyzing = false
+        let submittedSourceName = sourceName
+        let submittedSourceType = sourceType
         saving = true
         Task {
             do {
                 try await finance.classifyIncomeTransaction(
                     id: transaction.id,
                     as: classification,
-                    sourceName: sourceName,
-                    sourceType: sourceType
+                    sourceName: submittedSourceName,
+                    sourceType: submittedSourceType
                 )
                 dismiss()
             } catch {

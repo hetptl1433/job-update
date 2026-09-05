@@ -7,7 +7,7 @@ import WidgetKit
 
 struct CompleteTaskIntent: AppIntent {
     static var title: LocalizedStringResource = "Complete Orbit Task"
-    static var description = IntentDescription("Marks an Orbit task complete or incomplete.")
+    static var description = IntentDescription("Marks an Orbit task complete.")
     static var openAppWhenRun = false
 
     @Parameter(title: "Task ID") var taskID: String
@@ -16,14 +16,14 @@ struct CompleteTaskIntent: AppIntent {
     init(taskID: String) { self.taskID = taskID }
 
     func perform() async throws -> some IntentResult {
-        guard let id = UUID(uuidString: taskID) else { return .result() }
-        let task = SharedTaskStore.load().first { $0.id == id }
-        _ = SharedTaskStore.complete(id: id)
+        guard let id = UUID(uuidString: taskID),
+              let task = SharedTaskStore.load().first(where: { $0.id == id }),
+              SharedTaskStore.setCompletion(id: id, isCompleted: true) else { return .result() }
         UNUserNotificationCenter.current().removePendingNotificationRequests(
             withIdentifiers: ["orbit-task-\(id.uuidString)"]
         )
         if #available(iOS 26.0, *) { try? AlarmManager.shared.cancel(id: id) }
-        SharedCalendarEventDeletion.remove(identifier: task?.appleCalendarEventID)
+        SharedCalendarEventDeletion.remove(identifier: task.appleCalendarEventID)
         WidgetCenter.shared.reloadTimelines(ofKind: "OrbitTasksWidget")
         WidgetCenter.shared.reloadTimelines(ofKind: "OrbitRemindersWidget")
         return .result()

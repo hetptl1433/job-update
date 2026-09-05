@@ -29,13 +29,18 @@ struct JobRadarApp: App {
                 .onOpenURL { url in
                     _ = appState.handleOpenURL(url)
                 }
-                .task {
+                .task(id: appState.phase) {
+                    // Never let the system permission prompt compete with the
+                    // cold-launch Quick Add surface.
+                    guard appState.phase == .authenticated else { return }
                     await appState.notifications.requestAuthorization()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         appState.consumePendingLaunchRequest()
-                        appState.tasks.reload()
+                        if !appState.isPrioritizingQuickTaskCapture {
+                            appState.tasks.reload()
+                        }
                     }
                 }
         }

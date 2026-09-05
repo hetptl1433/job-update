@@ -144,6 +144,10 @@ enum SharedTaskStore {
     private static let reminderMigrationKey = "orbit.tasks.reminderMigration.v1"
 
     static func load() -> [TaskItem] {
+        load(from: defaults)
+    }
+
+    static func load(from defaults: UserDefaults) -> [TaskItem] {
         guard let data = defaults.data(forKey: storageKey),
               let tasks = try? JSONDecoder().decode([TaskItem].self, from: data) else { return [] }
         return tasks
@@ -151,18 +155,44 @@ enum SharedTaskStore {
 
     @discardableResult
     static func save(_ tasks: [TaskItem]) -> Bool {
+        save(tasks, to: defaults)
+    }
+
+    @discardableResult
+    static func save(_ tasks: [TaskItem], to defaults: UserDefaults) -> Bool {
         guard let data = try? JSONEncoder().encode(tasks) else { return false }
         defaults.set(data, forKey: storageKey)
-        return defaults.synchronize()
+        // UserDefaults synchronizes changes automatically. `synchronize()` is
+        // obsolete and can return false even though the value was accepted,
+        // which made callers roll their in-memory task change back and skip the
+        // widget timeline reload.
+        return true
     }
 
     @discardableResult
     static func complete(id: UUID) -> Bool {
-        var tasks = load()
+        setCompletion(id: id, isCompleted: true)
+    }
+
+    /// Writes an explicit completion state so repeated widget/intent delivery
+    /// cannot accidentally toggle a completed item back open.
+    @discardableResult
+    static func setCompletion(id: UUID, isCompleted: Bool) -> Bool {
+        setCompletion(id: id, isCompleted: isCompleted, defaults: defaults)
+    }
+
+    @discardableResult
+    static func setCompletion(
+        id: UUID,
+        isCompleted: Bool,
+        defaults: UserDefaults
+    ) -> Bool {
+        var tasks = load(from: defaults)
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return false }
-        tasks[index].isCompleted.toggle()
+        guard tasks[index].isCompleted != isCompleted else { return true }
+        tasks[index].isCompleted = isCompleted
         tasks[index].updatedAt = .now
-        return save(tasks)
+        return save(tasks, to: defaults)
     }
 
     static func prioritized(_ tasks: [TaskItem], includingCompleted: Bool = false) -> [TaskItem] {
@@ -238,6 +268,10 @@ enum SharedReminderStore {
     static let storageKey = "orbit.reminders.v1"
 
     static func load() -> [ReminderItem] {
+        load(from: defaults)
+    }
+
+    static func load(from defaults: UserDefaults) -> [ReminderItem] {
         guard let data = defaults.data(forKey: storageKey),
               let values = try? JSONDecoder().decode([ReminderItem].self, from: data) else { return [] }
         return values
@@ -245,18 +279,38 @@ enum SharedReminderStore {
 
     @discardableResult
     static func save(_ reminders: [ReminderItem]) -> Bool {
+        save(reminders, to: defaults)
+    }
+
+    @discardableResult
+    static func save(_ reminders: [ReminderItem], to defaults: UserDefaults) -> Bool {
         guard let data = try? JSONEncoder().encode(reminders) else { return false }
         defaults.set(data, forKey: storageKey)
-        return defaults.synchronize()
+        return true
     }
 
     @discardableResult
     static func complete(id: UUID) -> Bool {
-        var reminders = load()
+        setCompletion(id: id, isCompleted: true)
+    }
+
+    @discardableResult
+    static func setCompletion(id: UUID, isCompleted: Bool) -> Bool {
+        setCompletion(id: id, isCompleted: isCompleted, defaults: defaults)
+    }
+
+    @discardableResult
+    static func setCompletion(
+        id: UUID,
+        isCompleted: Bool,
+        defaults: UserDefaults
+    ) -> Bool {
+        var reminders = load(from: defaults)
         guard let index = reminders.firstIndex(where: { $0.id == id }) else { return false }
-        reminders[index].isCompleted.toggle()
+        guard reminders[index].isCompleted != isCompleted else { return true }
+        reminders[index].isCompleted = isCompleted
         reminders[index].updatedAt = .now
-        return save(reminders)
+        return save(reminders, to: defaults)
     }
 
     private static var defaults: UserDefaults {
@@ -278,10 +332,12 @@ enum OrbitIntegrationPreferences {
 /// request before iOS brings the main app to the foreground.
 enum OrbitLaunchTarget: String, AppEnum {
     case voice
+    case quickTaskCapture
 
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Orbit Destination")
     static var caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .voice: "Live Voice"
+        .voice: "Live Voice",
+        .quickTaskCapture: "Quick To Do"
     ]
 }
 
@@ -314,9 +370,9 @@ enum OrbitPendingLaunchStore {
 /// Opens Orbit and leaves a durable launch request for the app to consume.
 /// A custom OpenIntent is required because OpenURLIntent supports universal
 /// links, not Orbit's custom URL scheme.
-struct OpenOrbitVoiceIntent: OpenIntent {
-    static var title: LocalizedStringResource = "Open Orbit Voice"
-    static var description = IntentDescription("Opens Orbit directly in live voice mode.")
+struct OpenOrbitIntent: OpenIntent {
+    static var title: LocalizedStringResource = "Open Orbit"
+    static var description = IntentDescription("Opens Orbit directly at the requested destination.")
 
     @Parameter(title: "Destination") var target: OrbitLaunchTarget
 

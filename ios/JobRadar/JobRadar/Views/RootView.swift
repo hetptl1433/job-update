@@ -24,6 +24,10 @@ struct RootView: View {
         }
         .tint(AppTheme.brand)
         .preferredColorScheme(appearance.colorScheme)
+        .sheet(isPresented: quickTaskCapturePresented) {
+            QuickTaskCaptureView()
+                .environmentObject(app.tasks)
+        }
         .task {
             if app.phase == .launching { await app.bootstrap() }
         }
@@ -38,6 +42,13 @@ struct RootView: View {
             }
             return Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")))
         }
+    }
+
+    private var quickTaskCapturePresented: Binding<Bool> {
+        Binding(
+            get: { app.canPresentQuickTaskCapture },
+            set: { app.setQuickTaskCapturePresented($0) }
+        )
     }
 }
 

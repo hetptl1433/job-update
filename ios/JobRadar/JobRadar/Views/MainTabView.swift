@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Four primary destinations plus a persistent, visually distinct jump into
-/// live voice. Less frequent tools remain available from the More hub.
+/// Four primary destinations plus a persistent, visually distinct Orbit
+/// launcher. Less frequent tools remain available from the More hub.
 struct MainTabView: View {
     @EnvironmentObject private var app: AppState
     @State private var presentedMoreSheet: MoreSheet?
@@ -21,6 +21,7 @@ struct MainTabView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             OrbitControlBar(
                 selection: $app.selectedTab,
+                onChat: { app.openAssistant() },
                 onVoice: { app.assistantLaunch = .voice },
                 onOpenMoreDestination: openMoreDestination
             )
@@ -124,6 +125,7 @@ private struct MoreTabHost: View {
 
 struct OrbitControlBar: View {
     @Binding var selection: AppState.Tab
+    let onChat: () -> Void
     let onVoice: () -> Void
     let onOpenMoreDestination: (MoreDestination) -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -131,42 +133,46 @@ struct OrbitControlBar: View {
     var body: some View {
         GeometryReader { proxy in
             let slotWidth = proxy.size.width / 5
-            let voiceDiameter = min(48, max(40, slotWidth - 24))
+            let assistantDiameter = min(48, max(40, slotWidth - 24))
 
             HStack(alignment: .center, spacing: 0) {
                 destination(.home, title: "Home", symbol: "house", selectedSymbol: "house.fill")
                 destination(.finance, title: "Finance", symbol: "creditcard", selectedSymbol: "creditcard.fill")
 
-                Button(action: onVoice) {
-                    VStack(spacing: 3) {
-                        ZStack {
-                            Circle()
-                                .fill(AppTheme.brand.opacity(0.18))
-                                .frame(width: voiceDiameter + 7, height: voiceDiameter + 7)
-                                .blur(radius: 7)
-                            Circle()
-                                .fill(AppTheme.brandGradient)
-                                .frame(width: voiceDiameter, height: voiceDiameter)
-                                .overlay(Circle().strokeBorder(.white.opacity(0.34), lineWidth: 1))
-                                .shadow(color: AppTheme.brand.opacity(0.38), radius: 9, y: 4)
-                            Image(systemName: "waveform")
-                                .font(.system(size: 17, weight: .bold))
-                                .foregroundStyle(.white)
-                        }
-                        if !dynamicTypeSize.isAccessibilitySize {
-                            Text("Orbit")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(AppTheme.brand)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                        }
+                VStack(spacing: 3) {
+                    ZStack {
+                        Circle()
+                            .fill(AppTheme.brand.opacity(0.18))
+                            .frame(width: assistantDiameter + 7, height: assistantDiameter + 7)
+                            .blur(radius: 7)
+                        Circle()
+                            .fill(AppTheme.brandGradient)
+                            .frame(width: assistantDiameter, height: assistantDiameter)
+                            .overlay(Circle().strokeBorder(.white.opacity(0.34), lineWidth: 1))
+                            .shadow(color: AppTheme.brand.opacity(0.38), radius: 9, y: 4)
+                        Image(systemName: "message.fill")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(.white)
                     }
-                    .frame(maxWidth: .infinity)
-                    .offset(y: dynamicTypeSize.isAccessibilitySize ? 0 : -4)
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Text("Orbit")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(AppTheme.brand)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
                 }
-                .buttonStyle(OrbitBarButtonStyle())
-                .accessibilityLabel("Orbit voice")
-                .accessibilityHint("Opens live voice assistant")
+                .frame(maxWidth: .infinity, minHeight: 47)
+                .offset(y: dynamicTypeSize.isAccessibilitySize ? 0 : -4)
+                .contentShape(Rectangle())
+                .gesture(assistantGesture)
+                .accessibilityElement(children: .ignore)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Orbit Chat")
+                .accessibilityHint("Tap for text chat. Press and hold for live voice")
+                .accessibilityIdentifier("orbit.assistant.launcher")
+                .accessibilityAction { onChat() }
+                .accessibilityAction(named: "Start live voice") { onVoice() }
 
                 destination(.health, title: "Health", symbol: "heart", selectedSymbol: "heart.fill")
                 moreMenu
@@ -265,6 +271,19 @@ struct OrbitControlBar: View {
         withAnimation(.easeOut(duration: 0.18)) {
             selection = tab
         }
+    }
+
+    private var assistantGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.45, maximumDistance: 24)
+            .exclusively(before: TapGesture())
+            .onEnded { result in
+                switch result {
+                case .first(let didHold):
+                    if didHold { onVoice() }
+                case .second:
+                    onChat()
+                }
+            }
     }
 
     private func isDockSelected(_ tab: AppState.Tab) -> Bool {

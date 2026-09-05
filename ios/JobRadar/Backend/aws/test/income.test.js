@@ -73,11 +73,22 @@ test("provider income confirms while text-only payroll and unknown deposits requ
 
   assert.equal(result.get("provider-pay").status, "confirmed");
   assert.equal(result.get("provider-pay").reason, "providerIncomeCategory");
+  assert.equal(result.get("provider-pay").decisionSource, "provider");
   assert.equal(result.get("provider-pay").sourceType, "salary");
   assert.equal(result.get("keyword-pay").status, "needsReview");
   assert.equal(result.get("keyword-pay").reason, "incomeKeyword");
+  assert.equal(result.get("keyword-pay").decisionSource, "deterministicRule");
   assert.equal(result.get("unknown").status, "needsReview");
+  assert.equal(result.get("unknown").decisionSource, "deterministicRule");
   assert.equal(result.has("purchase"), false);
+
+  const summary = buildIncomeOverview(
+    [providerPayroll, keywordOnly, unknown, purchase],
+    { asOfDate: "2026-08-09" }
+  ).summaries[0];
+  assert.equal(summary.confirmedTransactions[0].decisionSource, "provider");
+  assert.equal(summary.sources[0].decisionSource, "provider");
+  assert.ok(summary.needsReviewTransactions.every(value => value.decisionSource === "deterministicRule"));
 });
 
 test("low-confidence and nonspecific provider income categories remain review items", () => {
@@ -130,6 +141,11 @@ test("refunds, reversals, reimbursements, and loan proceeds never auto-count as 
       providerCategoryPrimary: "INCOME",
       providerCategoryDetailed: "INCOME_OTHER_INCOME"
     }),
+    transaction("provider-refund", {
+      name: "Merchant credit",
+      providerCategoryPrimary: "INCOME",
+      providerCategoryDetailed: "INCOME_OTHER_INCOME_REFUND"
+    }),
     transaction("reversal", { name: "ACH reversal" }),
     transaction("reimbursement", { name: "Travel expense reimbursement" }),
     transaction("loan", {
@@ -141,10 +157,25 @@ test("refunds, reversals, reimbursements, and loan proceeds never auto-count as 
   const result = classifiedByID(values);
 
   assert.equal(result.get("refund").reason, "refundOrReversal");
+  assert.equal(result.get("provider-refund").reason, "refundOrReversal");
   assert.equal(result.get("reversal").reason, "refundOrReversal");
   assert.equal(result.get("reimbursement").reason, "reimbursement");
   assert.equal(result.get("loan").reason, "loanProceeds");
   for (const entry of result.values()) assert.equal(entry.status, "excluded");
+  assert.equal(result.get("refund").decisionSource, "deterministicRule");
+  assert.equal(result.get("provider-refund").decisionSource, "provider");
+  assert.equal(result.get("loan").decisionSource, "provider");
+
+  const summary = buildIncomeOverview(values, { asOfDate: "2026-08-09" }).summaries[0];
+  const excludedByID = new Map(summary.excludedTransactions.map(value => [value.id, value]));
+  assert.equal(excludedByID.size, 5);
+  assert.equal(excludedByID.get("refund").classification, "notIncome");
+  assert.equal(excludedByID.get("refund").classificationReason, "refundOrReversal");
+  assert.equal(excludedByID.get("refund").decisionSource, "deterministicRule");
+  assert.equal(excludedByID.get("provider-refund").decisionSource, "provider");
+  assert.equal(excludedByID.get("refund").userConfirmed, false);
+  assert.equal(excludedByID.get("loan").decisionSource, "provider");
+  assert.deepEqual(summary.thisMonth, { confirmed: 0, pending: 0, needsReview: 0 });
 });
 
 test("P2P deposits require review while a reconciled own-account transfer is excluded", () => {
@@ -179,13 +210,31 @@ test("P2P deposits require review while a reconciled own-account transfer is exc
     amount: 700,
     direction: "outflow"
   });
-  const result = classifiedByID([p2p, transferIn, transferOut, equalButUnrelated, equalPurchase]);
+  const providerTransfer = transaction("provider-transfer", {
+    name: "ACH credit",
+    amount: 320,
+    providerCategoryPrimary: "TRANSFER_IN",
+    providerCategoryDetailed: "TRANSFER_IN_ACCOUNT_TRANSFER"
+  });
+  const result = classifiedByID([
+    p2p,
+    transferIn,
+    transferOut,
+    equalButUnrelated,
+    equalPurchase,
+    providerTransfer
+  ]);
 
   assert.equal(result.get("venmo").status, "needsReview");
   assert.equal(result.get("venmo").reason, "peerToPeer");
+  assert.equal(result.get("venmo").decisionSource, "deterministicRule");
   assert.equal(result.get("transfer-in").status, "excluded");
   assert.equal(result.get("transfer-in").reason, "ownAccountTransfer");
+  assert.equal(result.get("transfer-in").decisionSource, "deterministicRule");
   assert.equal(result.get("unrelated").status, "needsReview");
+  assert.equal(result.get("provider-transfer").status, "excluded");
+  assert.equal(result.get("provider-transfer").reason, "transferCategory");
+  assert.equal(result.get("provider-transfer").decisionSource, "provider");
 });
 
 test("multiple possible transfer counterparts remain reviewable instead of guessing ownership", () => {
@@ -282,6 +331,120 @@ test("descriptor rules apply forward in time without rewriting earlier ambiguous
   assert.equal(result.get("later").reason, "userDescriptorRule");
 });
 
+test("AI decisions classify income without claiming user confirmation", () => {
+  const income = transaction("ai-income", { name: "Northstar client deposit", amount: 875 });
+  const otherDeposit = transaction("ai-other", { name: "Family gift", amount: 125 });
+  const records = [
+    income,
+    otherDeposit,
+    userClassification(income, "income", {
+      decisionSource: "ai",
+      confidence: 0.87,
+      reason: "The recurring client descriptor is consistent with contract income.",
+      sourceName: "Northstar",
+      sourceType: "contract"
+    }),
+    userClassification(otherDeposit, "notIncome", {
+      decisionSource: "ai",
+      confidence: 0.93,
+      reason: "The descriptor identifies a personal gift rather than earnings."
+    })
+  ];
+
+  const classified = classifiedByID(records);
+  assert.equal(classified.get("ai-income").status, "confirmed");
+  assert.equal(classified.get("ai-income").decisionSource, "ai");
+  assert.equal(classified.get("ai-income").userConfirmed, false);
+  assert.equal(classified.get("ai-income").confidence, 0.87);
+  assert.equal(classified.get("ai-other").status, "excluded");
+  assert.equal(classified.get("ai-other").decisionSource, "ai");
+  assert.equal(classified.get("ai-other").userConfirmed, false);
+
+  const summary = buildIncomeOverview(records, { asOfDate: "2026-08-09" }).summaries[0];
+  assert.equal(summary.confirmedTransactions[0].decisionSource, "ai");
+  assert.equal(summary.confirmedTransactions[0].userConfirmed, false);
+  assert.equal(summary.confirmedTransactions[0].classificationReason,
+    "The recurring client descriptor is consistent with contract income.");
+  assert.equal(summary.sources[0].decisionSource, "ai");
+  assert.equal(summary.sources[0].userConfirmed, false);
+  assert.equal(summary.excludedTransactions.length, 1);
+  assert.equal(summary.excludedTransactions[0].id, "ai-other");
+  assert.equal(summary.excludedTransactions[0].classification, "notIncome");
+  assert.equal(summary.excludedTransactions[0].decisionSource, "ai");
+  assert.equal(summary.excludedTransactions[0].userConfirmed, false);
+  assert.equal(summary.excludedTransactions[0].confidence, 0.93);
+  assert.equal(summary.excludedTransactions[0].classificationReason,
+    "The descriptor identifies a personal gift rather than earnings.");
+});
+
+test("stored AI decisions below the automatic threshold fall back to deterministic review", () => {
+  const target = transaction("low-confidence-ai", { name: "Mystery client deposit", amount: 875 });
+  const thresholdTarget = transaction("threshold-ai", { name: "Documented client deposit", amount: 920 });
+  const weakRule = userClassification(target, "income", {
+    decisionSource: "ai",
+    confidence: 0.79,
+    reason: "The deposit might be client income.",
+    sourceName: "Mystery client",
+    sourceType: "contract"
+  });
+  const thresholdRule = userClassification(thresholdTarget, "income", {
+    decisionSource: "ai",
+    confidence: 0.80,
+    reason: "The descriptor and history support client income.",
+    sourceName: "Documented client",
+    sourceType: "contract"
+  });
+
+  const result = classifiedByID([target, thresholdTarget, weakRule, thresholdRule]);
+  assert.equal(result.get(target.id).status, "needsReview");
+  assert.equal(result.get(target.id).reason, "unrecognizedInflow");
+  assert.equal(result.get(target.id).decisionSource, "deterministicRule");
+  assert.equal(result.get(thresholdTarget.id).status, "confirmed");
+  assert.equal(result.get(thresholdTarget.id).decisionSource, "ai");
+});
+
+test("legacy user decisions outrank newer AI decisions for the same descriptor", () => {
+  const userTarget = transaction("user-seed", {
+    date: "2026-08-01",
+    name: "Studio deposit 123456"
+  });
+  const aiTarget = transaction("ai-later", {
+    date: "2026-08-05",
+    name: "studio deposit 777777"
+  });
+  const future = transaction("future-match", {
+    date: "2026-08-09",
+    name: "STUDIO DEPOSIT 999999"
+  });
+  const legacyUserDecision = userClassification(userTarget, "notIncome", {
+    updatedAt: "2026-08-02T12:00:00.000Z"
+  });
+  const newerAIDecision = userClassification(aiTarget, "income", {
+    decisionSource: "ai",
+    confidence: 0.99,
+    reason: "The deposit looks like recurring freelance income.",
+    sourceName: "Studio",
+    sourceType: "freelance",
+    updatedAt: "2026-08-08T12:00:00.000Z"
+  });
+
+  const result = classifiedByID([
+    userTarget,
+    aiTarget,
+    future,
+    legacyUserDecision,
+    newerAIDecision
+  ]);
+
+  assert.equal(result.get("user-seed").reason, "userOverride");
+  assert.equal(result.get("user-seed").decisionSource, "user");
+  assert.equal(result.get("ai-later").status, "excluded");
+  assert.equal(result.get("ai-later").reason, "userDescriptorRule");
+  assert.equal(result.get("ai-later").decisionSource, "user");
+  assert.equal(result.get("future-match").status, "excluded");
+  assert.equal(result.get("future-match").decisionSource, "user");
+});
+
 test("confirmed P2P descriptors can identify later matching income while unrelated P2P stays review", () => {
   const consulting = transaction("venmo-consulting", { date: "2026-08-01", name: "Venmo Taylor consulting" });
   const futureConsulting = transaction("venmo-future", { date: "2026-08-08", name: "venmo taylor consulting" });
@@ -350,6 +513,17 @@ test("learned exclusions carry forward and automated hard exclusions beat inheri
   assert.equal(result.get("loan-1").reason, "userOverride");
   assert.equal(result.get("loan-2").status, "excluded");
   assert.equal(result.get("loan-2").reason, "loanProceeds");
+
+  const summary = buildIncomeOverview([gift, futureGift, loan, futureLoan, ...rules], {
+    asOfDate: "2026-08-09"
+  }).summaries[0];
+  const excludedByID = new Map(summary.excludedTransactions.map(value => [value.id, value]));
+  assert.equal(excludedByID.get("gift-1").classification, "notIncome");
+  assert.equal(excludedByID.get("gift-1").decisionSource, "user");
+  assert.equal(excludedByID.get("gift-1").userConfirmed, true);
+  assert.equal(excludedByID.get("gift-1").classificationReason, "userOverride");
+  assert.equal(excludedByID.get("gift-2").decisionSource, "user");
+  assert.equal(excludedByID.get("loan-2").decisionSource, "deterministicRule");
 });
 
 test("posted date controls month and YTD while authorized date remains output context", () => {
@@ -588,6 +762,9 @@ test("classification validation accepts only exact decisions and bounded source 
     classification: "income",
     sourceName: "Acme",
     sourceType: "consulting",
+    decisionSource: "user",
+    confidence: undefined,
+    reason: undefined,
     asOfDate: "2026-08-09",
     timeZone: "America/Indiana/Indianapolis"
   });
@@ -600,6 +777,36 @@ test("classification validation accepts only exact decisions and bounded source 
     classification: "notIncome",
     sourceName: undefined,
     sourceType: "other",
+    decisionSource: "user",
+    confidence: undefined,
+    reason: undefined,
+    asOfDate: "2026-08-09",
+    timeZone: "UTC"
+  });
+  assert.equal(validateIncomeClassificationRequest({
+    classification: "notIncome",
+    decisionSource: "ai",
+    confidence: 0.80,
+    reason: "The deposit is a documented account transfer.",
+    asOfDate: "2026-08-09",
+    timeZone: "UTC"
+  }).confidence, 0.80);
+  assert.deepEqual(validateIncomeClassificationRequest({
+    classification: "income",
+    sourceName: "Northstar",
+    sourceType: "contract",
+    decisionSource: "ai",
+    confidence: 0.88,
+    reason: "  Repeated client deposits match contract income.  ",
+    asOfDate: "2026-08-09",
+    timeZone: "UTC"
+  }), {
+    classification: "income",
+    sourceName: "Northstar",
+    sourceType: "contract",
+    decisionSource: "ai",
+    confidence: 0.88,
+    reason: "Repeated client deposits match contract income.",
     asOfDate: "2026-08-09",
     timeZone: "UTC"
   });
@@ -609,6 +816,29 @@ test("classification validation accepts only exact decisions and bounded source 
     classification: "income", type: "salary", sourceType: "hourly"
   }), /cannot disagree/);
   assert.throws(() => validateIncomeClassificationRequest({ classification: "income", sourceName: "\n" }), /sourceName/);
+  assert.throws(() => validateIncomeClassificationRequest({
+    classification: "income", decisionSource: "model", asOfDate: "2026-08-09", timeZone: "UTC"
+  }), /decisionSource must be user or ai/);
+  assert.throws(() => validateIncomeClassificationRequest({
+    classification: "income", decisionSource: "ai", reason: "Likely salary.",
+    asOfDate: "2026-08-09", timeZone: "UTC"
+  }), /require confidence and reason/);
+  assert.throws(() => validateIncomeClassificationRequest({
+    classification: "income", decisionSource: "ai", confidence: 1.01, reason: "Likely salary.",
+    asOfDate: "2026-08-09", timeZone: "UTC"
+  }), /confidence must be a finite number/);
+  assert.throws(() => validateIncomeClassificationRequest({
+    classification: "income", decisionSource: "ai", confidence: 0.799999, reason: "Weak guess.",
+    asOfDate: "2026-08-09", timeZone: "UTC"
+  }), /confidence of at least 0\.80/);
+  assert.throws(() => validateIncomeClassificationRequest({
+    classification: "notIncome", decisionSource: "ai", confidence: 0, reason: "Weak guess.",
+    asOfDate: "2026-08-09", timeZone: "UTC"
+  }), /confidence of at least 0\.80/);
+  assert.throws(() => validateIncomeClassificationRequest({
+    classification: "income", decisionSource: "ai", confidence: 0.8, reason: "x".repeat(281),
+    asOfDate: "2026-08-09", timeZone: "UTC"
+  }), /reason must be 1 to 280/);
   assert.throws(() => validateIncomeClassificationRequest({ classification: "income", userID: "someone-else" }), /Unknown request field/);
   assert.throws(() => validateIncomeClassificationRequest({ classification: "income" }), /asOfDate/);
 });
@@ -658,10 +888,124 @@ test("classification service scopes persistence to the authenticated user and re
   assert.equal(captured.value.classification, "income");
   assert.equal(captured.value.sourceName, "Client");
   assert.equal(captured.value.sourceType, "consulting");
+  assert.equal(captured.value.decisionSource, "user");
   assert.equal(captured.existing, null);
   assert.equal(overview.summaries[0].thisMonth.confirmed, 875);
   assert.equal(overview.summaries[0].confirmedTransactions[0].userConfirmed, true);
+  assert.equal(overview.summaries[0].confirmedTransactions[0].decisionSource, "user");
+  assert.equal(overview.summaries[0].sources[0].decisionSource, "user");
   assert.equal(overview.lastUpdatedAt, "2026-08-09T18:00:00.000Z");
+});
+
+test("classification service persists AI provenance and returns it in the refreshed overview", async () => {
+  const target = transaction("ai-target", { name: "Northstar payment", amount: 725 });
+  let captured;
+  const overview = await classifyIncomeTransaction("google-user-123", target.id, {
+    classification: "income",
+    sourceName: "Northstar",
+    sourceType: "contract",
+    decisionSource: "ai",
+    confidence: 0.84,
+    reason: "A repeating client payment is consistent with contract income.",
+    asOfDate: "2026-08-09",
+    timeZone: "UTC"
+  }, {
+    listUserRecords: async () => [target],
+    saveIncomeClassification: async (_userSub, savedTransaction, value) => {
+      captured = value;
+      return {
+        entityType: "INCOME_CLASSIFICATION",
+        transactionID: savedTransaction.id,
+        transactionDate: savedTransaction.date,
+        accountID: savedTransaction.accountID,
+        itemID: savedTransaction.itemID,
+        descriptor: value.descriptor,
+        classification: value.classification,
+        sourceName: value.sourceName,
+        sourceType: value.sourceType,
+        decisionSource: value.decisionSource,
+        confidence: value.confidence,
+        reason: value.reason,
+        updatedAt: "2026-08-09T18:00:00.000Z"
+      };
+    }
+  });
+
+  assert.equal(captured.decisionSource, "ai");
+  assert.equal(captured.confidence, 0.84);
+  assert.equal(captured.reason, "A repeating client payment is consistent with contract income.");
+  assert.equal(overview.summaries[0].confirmedTransactions[0].decisionSource, "ai");
+  assert.equal(overview.summaries[0].confirmedTransactions[0].userConfirmed, false);
+  assert.equal(overview.summaries[0].sources[0].decisionSource, "ai");
+  assert.equal(overview.summaries[0].sources[0].userConfirmed, false);
+});
+
+test("classification service does not let AI replace a legacy user decision", async () => {
+  const target = transaction("protected-target", { name: "Protected payment", amount: 500 });
+  const existing = userClassification(target, "income", {
+    sourceName: "Protected client",
+    sourceType: "consulting"
+  });
+  let writes = 0;
+
+  const overview = await classifyIncomeTransaction("google-user-123", target.id, {
+    classification: "notIncome",
+    decisionSource: "ai",
+    confidence: 0.96,
+    reason: "The payment may be a transfer.",
+    asOfDate: "2026-08-09",
+    timeZone: "UTC"
+  }, {
+    listUserRecords: async () => [target, existing],
+    saveIncomeClassification: async () => { writes += 1; }
+  });
+
+  assert.equal(writes, 0);
+  assert.equal(overview.summaries[0].thisMonth.confirmed, 500);
+  assert.equal(overview.summaries[0].confirmedTransactions[0].decisionSource, "user");
+  assert.equal(overview.summaries[0].confirmedTransactions[0].userConfirmed, true);
+});
+
+test("classification service lets a user replace an earlier AI decision", async () => {
+  const target = transaction("ai-correction", { name: "Client payment", amount: 640 });
+  const existing = userClassification(target, "notIncome", {
+    decisionSource: "ai",
+    confidence: 0.88,
+    reason: "The deposit was initially interpreted as an account transfer."
+  });
+  let captured;
+
+  const overview = await classifyIncomeTransaction("google-user-123", target.id, {
+    classification: "income",
+    sourceName: "Client",
+    sourceType: "consulting",
+    asOfDate: "2026-08-09",
+    timeZone: "UTC"
+  }, {
+    listUserRecords: async () => [target, existing],
+    saveIncomeClassification: async (_userSub, savedTransaction, value, previous) => {
+      captured = { value, previous };
+      return {
+        entityType: "INCOME_CLASSIFICATION",
+        transactionID: savedTransaction.id,
+        transactionDate: savedTransaction.date,
+        accountID: savedTransaction.accountID,
+        itemID: savedTransaction.itemID,
+        descriptor: value.descriptor,
+        classification: value.classification,
+        sourceName: value.sourceName,
+        sourceType: value.sourceType,
+        decisionSource: value.decisionSource,
+        updatedAt: "2026-08-09T19:00:00.000Z"
+      };
+    }
+  });
+
+  assert.equal(captured.previous, existing);
+  assert.equal(captured.value.decisionSource, "user");
+  assert.equal(overview.summaries[0].thisMonth.confirmed, 640);
+  assert.equal(overview.summaries[0].confirmedTransactions[0].decisionSource, "user");
+  assert.equal(overview.summaries[0].confirmedTransactions[0].userConfirmed, true);
 });
 
 test("classification service rejects missing and outgoing transactions without writing", async () => {

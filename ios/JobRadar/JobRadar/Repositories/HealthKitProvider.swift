@@ -235,7 +235,7 @@ final class HealthKitProvider: HealthProviding {
         var activeEnergy: Double
         var exerciseMinutes: Double
         var standHours: Double
-        var moveGoal: Double
+        var moveGoal: Double    
         var exerciseGoal: Double
         var standGoal: Double
     }

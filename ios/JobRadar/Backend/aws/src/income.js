@@ -23,8 +23,11 @@ export const INCOME_FREQUENCIES = Object.freeze([
   "oneTime"
 ]);
 
+export const MINIMUM_AI_CLASSIFICATION_CONFIDENCE = 0.80;
+
 const DAY_MILLISECONDS = 86_400_000;
 const USER_CLASSIFICATIONS = new Set(["income", "notIncome"]);
+const CLASSIFICATION_DECISION_SOURCES = new Set(["user", "ai"]);
 const REGULAR_FREQUENCIES = new Set(["weekly", "biweekly", "semimonthly", "monthly"]);
 
 function normalizedText(value) {
@@ -194,11 +197,15 @@ function transactionText(transaction) {
   ].filter(Boolean).join(" "));
 }
 
-function hasTransferSignal(transaction) {
+function hasProviderTransferSignal(transaction) {
   const primary = String(transaction.providerCategoryPrimary ?? "").toUpperCase();
   const detailed = String(transaction.providerCategoryDetailed ?? "").toUpperCase();
+  return primary.startsWith("TRANSFER_") || detailed.startsWith("TRANSFER_");
+}
+
+function hasTransferSignal(transaction) {
   const text = transactionText(transaction);
-  return primary.startsWith("TRANSFER_") || detailed.startsWith("TRANSFER_") ||
+  return hasProviderTransferSignal(transaction) ||
     /\b(transfer|xfer|internal transfer|account transfer)\b/.test(text);
 }
 
@@ -206,20 +213,26 @@ function isPeerToPeer(transaction) {
   return /\b(venmo|zelle|cash app|cashapp|peer to peer|p2p|paypal transfer)\b/.test(transactionText(transaction));
 }
 
-function exclusionReason(transaction) {
+function exclusionDecision(transaction) {
   const detailed = String(transaction.providerCategoryDetailed ?? "").toUpperCase();
   const text = transactionText(transaction);
 
   if (detailed.includes("CASH_ADVANCES_AND_LOANS") ||
       /\b(loan proceeds?|loan disbursement|loan funding|cash advance|borrowed funds?)\b/.test(text)) {
-    return "loanProceeds";
+    return {
+      reason: "loanProceeds",
+      decisionSource: detailed.includes("CASH_ADVANCES_AND_LOANS") ? "provider" : "deterministicRule"
+    };
   }
   if (/\b(reimburse|reimbursed|reimbursement|expense repayment|expense reimbursement)\b/.test(text)) {
-    return "reimbursement";
+    return { reason: "reimbursement", decisionSource: "deterministicRule" };
   }
   if (detailed.includes("REFUND") ||
       /\b(refund|returns?|returned|merchant credit|reversal|reversed)\b/.test(text)) {
-    return "refundOrReversal";
+    return {
+      reason: "refundOrReversal",
+      decisionSource: detailed.includes("REFUND") ? "provider" : "deterministicRule"
+    };
   }
   return null;
 }
@@ -269,18 +282,78 @@ function sourceName(transaction, override) {
   return chosen.slice(0, 120);
 }
 
-function latestRecords(records, keyForRecord) {
+function storedDecisionSource(record) {
+  if (!record) return null;
+  if (record.decisionSource == null) return "user";
+  return CLASSIFICATION_DECISION_SOURCES.has(record.decisionSource) ? record.decisionSource : null;
+}
+
+function validClassificationRecord(record) {
+  const decisionSource = storedDecisionSource(record);
+  if (!decisionSource) return false;
+  if (decisionSource === "user") return true;
+  return typeof record.confidence === "number" && Number.isFinite(record.confidence) &&
+    record.confidence >= MINIMUM_AI_CLASSIFICATION_CONFIDENCE && record.confidence <= 1 &&
+    typeof record.reason === "string" && record.reason.trim().length > 0 &&
+    record.reason.trim().length <= 280 && !/[\u0000-\u001f\u007f]/.test(record.reason);
+}
+
+function compareClassificationRecords(first, second) {
+  const firstPriority = storedDecisionSource(first) === "user" ? 1 : 0;
+  const secondPriority = storedDecisionSource(second) === "user" ? 1 : 0;
+  return secondPriority - firstPriority ||
+    String(second.updatedAt ?? second.createdAt ?? "")
+      .localeCompare(String(first.updatedAt ?? first.createdAt ?? "")) ||
+    String(first.transactionID ?? "").localeCompare(String(second.transactionID ?? ""));
+}
+
+function preferredRecords(records, keyForRecord) {
   const result = new Map();
   for (const record of records) {
     const key = keyForRecord(record);
     if (!key) continue;
     const existing = result.get(key);
-    if (!existing || String(record.updatedAt ?? record.createdAt ?? "") >=
-        String(existing.updatedAt ?? existing.createdAt ?? "")) {
+    if (!existing || compareClassificationRecords(record, existing) < 0) {
       result.set(key, record);
     }
   }
   return result;
+}
+
+function resultFromRule(transaction, rule, isDirect) {
+  const decisionSource = storedDecisionSource(rule);
+  const isUserDecision = decisionSource === "user";
+  const confidence = isUserDecision ? (isDirect ? 1 : 0.98) : rule.confidence;
+  const reason = isUserDecision
+    ? (isDirect ? "userOverride" : "userDescriptorRule")
+    : rule.reason.trim();
+  const shared = {
+    reason,
+    confidence,
+    userConfirmed: isUserDecision,
+    decisionSource
+  };
+  if (rule.classification === "notIncome") {
+    return { status: "excluded", ...shared };
+  }
+  return {
+    status: "confirmed",
+    ...shared,
+    sourceName: sourceName(transaction, rule.sourceName),
+    sourceType: inferredSourceType(transaction, rule.sourceType ?? rule.type)
+  };
+}
+
+function preferredRule(directRule, inheritedRule) {
+  if (storedDecisionSource(directRule) === "user") {
+    return { rule: directRule, isDirect: true };
+  }
+  if (storedDecisionSource(inheritedRule) === "user") {
+    return { rule: inheritedRule, isDirect: false };
+  }
+  if (directRule) return { rule: directRule, isDirect: true };
+  if (inheritedRule) return { rule: inheritedRule, isDirect: false };
+  return null;
 }
 
 function transferReconciliation(transactions) {
@@ -339,7 +412,9 @@ function publicIncomeTransaction(transaction, classification) {
     confidence: classification.confidence,
     classificationReason: classification.reason,
     userConfirmed: classification.userConfirmed,
-    classification: classification.status === "confirmed" ? "income" : "needsReview",
+    decisionSource: classification.decisionSource ?? null,
+    classification: classification.status === "confirmed" ? "income" :
+      (classification.status === "excluded" ? "notIncome" : "needsReview"),
     basis: "observedNetDeposit"
   };
 }
@@ -352,8 +427,9 @@ export function classifyIncomeTransactions(records, options = {}) {
     finitePositiveAmount(record.amount) != null &&
     (record.direction === "inflow" || record.direction === "outflow"));
   const classificationRecords = records.filter(record => record.entityType === "INCOME_CLASSIFICATION" &&
-    typeof record.transactionID === "string" && USER_CLASSIFICATIONS.has(record.classification));
-  const directRules = latestRecords(classificationRecords, record => record.transactionID);
+    typeof record.transactionID === "string" && USER_CLASSIFICATIONS.has(record.classification) &&
+    validClassificationRecord(record));
+  const directRules = preferredRecords(classificationRecords, record => record.transactionID);
   const transactionsByID = new Map(transactions.map(transaction => [transaction.id, transaction]));
   const descriptorRules = new Map();
   for (const record of classificationRecords) {
@@ -365,8 +441,7 @@ export function classifyIncomeTransactions(records, options = {}) {
     descriptorRules.set(record.descriptor, rules);
   }
   for (const rules of descriptorRules.values()) {
-    rules.sort((first, second) => String(second.updatedAt ?? second.createdAt ?? "")
-      .localeCompare(String(first.updatedAt ?? first.createdAt ?? "")));
+    rules.sort(compareClassificationRecords);
   }
   const reconciledTransfers = transferReconciliation(transactions);
   const classified = [];
@@ -378,81 +453,79 @@ export function classifyIncomeTransactions(records, options = {}) {
     const directRule = directRules.get(transaction.id) ??
       (transaction.pendingTransactionID ? directRules.get(transaction.pendingTransactionID) : null);
     const inheritedRule = descriptorRules.get(descriptor)?.find(rule => rule.transactionDate <= transaction.date);
+    const chosenRule = preferredRule(directRule, inheritedRule);
+    const directUserRule = chosenRule?.isDirect && storedDecisionSource(chosenRule.rule) === "user"
+      ? chosenRule.rule
+      : null;
+    const automaticRule = directUserRule ? null : chosenRule;
     let result;
 
-    if (directRule) {
-      result = directRule.classification === "income" ? {
-        status: "confirmed",
-        reason: "userOverride",
-        confidence: 1,
-        userConfirmed: true,
-        sourceName: sourceName(transaction, directRule.sourceName),
-        sourceType: inferredSourceType(transaction, directRule.sourceType ?? directRule.type)
-      } : { status: "excluded", reason: "userOverride", confidence: 1, userConfirmed: true };
+    if (directUserRule) {
+      result = resultFromRule(transaction, directUserRule, true);
     } else if (reconciledTransfers.paired.has(transaction.id)) {
-      result = { status: "excluded", reason: "ownAccountTransfer", confidence: 1, userConfirmed: false };
+      result = {
+        status: "excluded",
+        reason: "ownAccountTransfer",
+        confidence: 1,
+        userConfirmed: false,
+        decisionSource: "deterministicRule"
+      };
     } else {
-      const excluded = exclusionReason(transaction);
+      const excluded = exclusionDecision(transaction);
       if (excluded) {
-        result = { status: "excluded", reason: excluded, confidence: 0.99, userConfirmed: false };
+        result = {
+          status: "excluded",
+          reason: excluded.reason,
+          confidence: 0.99,
+          userConfirmed: false,
+          decisionSource: excluded.decisionSource
+        };
       } else if (reconciledTransfers.ambiguous.has(transaction.id)) {
         result = {
           status: "needsReview",
           reason: "ambiguousTransfer",
           confidence: 0.2,
           userConfirmed: false,
+          decisionSource: "deterministicRule",
           sourceName: sourceName(transaction),
           sourceType: inferredSourceType(transaction)
         };
       } else if (isPeerToPeer(transaction)) {
-        if (inheritedRule) {
-          result = inheritedRule.classification === "income" ? {
-            status: "confirmed",
-            reason: "userDescriptorRule",
-            confidence: 0.98,
-            userConfirmed: true,
-            sourceName: sourceName(transaction, inheritedRule.sourceName),
-            sourceType: inferredSourceType(transaction, inheritedRule.sourceType ?? inheritedRule.type)
-          } : { status: "excluded", reason: "userDescriptorRule", confidence: 0.98, userConfirmed: true };
+        if (automaticRule) {
+          result = resultFromRule(transaction, automaticRule.rule, automaticRule.isDirect);
         } else {
           result = {
             status: "needsReview",
             reason: "peerToPeer",
             confidence: 0.35,
             userConfirmed: false,
+            decisionSource: "deterministicRule",
             sourceName: sourceName(transaction),
             sourceType: inferredSourceType(transaction)
           };
         }
       } else if (hasTransferSignal(transaction)) {
-        if (inheritedRule) {
-          result = inheritedRule.classification === "income" ? {
-            status: "confirmed",
-            reason: "userDescriptorRule",
-            confidence: 0.98,
-            userConfirmed: true,
-            sourceName: sourceName(transaction, inheritedRule.sourceName),
-            sourceType: inferredSourceType(transaction, inheritedRule.sourceType ?? inheritedRule.type)
-          } : { status: "excluded", reason: "userDescriptorRule", confidence: 0.98, userConfirmed: true };
+        if (automaticRule) {
+          result = resultFromRule(transaction, automaticRule.rule, automaticRule.isDirect);
         } else {
-          result = { status: "excluded", reason: "transferCategory", confidence: 0.98, userConfirmed: false };
+          result = {
+            status: "excluded",
+            reason: "transferCategory",
+            confidence: 0.98,
+            userConfirmed: false,
+            decisionSource: hasProviderTransferSignal(transaction) ? "provider" : "deterministicRule"
+          };
         }
       } else {
-        if (inheritedRule) {
-          result = inheritedRule.classification === "income" ? {
-            status: "confirmed",
-            reason: "userDescriptorRule",
-            confidence: 0.98,
-            userConfirmed: true,
-            sourceName: sourceName(transaction, inheritedRule.sourceName),
-            sourceType: inferredSourceType(transaction, inheritedRule.sourceType ?? inheritedRule.type)
-          } : { status: "excluded", reason: "userDescriptorRule", confidence: 0.98, userConfirmed: true };
+        if (automaticRule) {
+          result = resultFromRule(transaction, automaticRule.rule, automaticRule.isDirect);
         } else if (isStrongProviderIncome(transaction)) {
           result = {
             status: "confirmed",
             reason: "providerIncomeCategory",
             confidence: 0.9,
             userConfirmed: false,
+            decisionSource: "provider",
             sourceName: sourceName(transaction),
             sourceType: inferredSourceType(transaction)
           };
@@ -463,6 +536,7 @@ export function classifyIncomeTransactions(records, options = {}) {
             reason: keywordCandidate ? "incomeKeyword" : "unrecognizedInflow",
             confidence: keywordCandidate ? 0.55 : 0.25,
             userConfirmed: false,
+            decisionSource: "deterministicRule",
             sourceName: sourceName(transaction),
             sourceType: inferredSourceType(transaction)
           };
@@ -474,7 +548,7 @@ export function classifyIncomeTransactions(records, options = {}) {
       transaction,
       descriptor,
       ...result,
-      publicTransaction: result.status === "excluded" ? null : publicIncomeTransaction(transaction, result)
+      publicTransaction: publicIncomeTransaction(transaction, result)
     });
   }
   return classified;
@@ -574,6 +648,9 @@ function buildSources(classified, asOfDate, thisMonth) {
       (frequency === "irregular" ? sumAmounts(amounts) / Math.max(monthSpan, 1) : paymentAverage);
     const confidence = roundAmount(average(group.entries.map(entry => entry.confidence)));
     const currencyCode = String(group.entries[0].transaction.currencyCode || "USD").toUpperCase();
+    const decisionSources = new Set(group.entries.map(entry => entry.decisionSource).filter(Boolean));
+    const decisionSource = ["user", "ai", "provider", "deterministicRule"]
+      .find(source => decisionSources.has(source)) ?? null;
 
     return {
       id: sourceIdentifier(currencyCode, group.key),
@@ -588,6 +665,7 @@ function buildSources(classified, asOfDate, thisMonth) {
       active,
       confidence,
       userConfirmed: group.entries.some(entry => entry.userConfirmed),
+      decisionSource,
       thisMonth: sumAmounts(posted.filter(entry => monthKey(entry.transaction.date) === thisMonth)
         .map(entry => entry.transaction.amount)),
       yearToDate: sumAmounts(posted.filter(entry => entry.transaction.date.startsWith(`${asOfDate.slice(0, 4)}-`))
@@ -711,6 +789,9 @@ function buildCurrencySummary(currencyCode, currencyRecords, classified, asOfDat
       .map(entry => entry.publicTransaction)
       .sort((first, second) => second.date.localeCompare(first.date) || first.name.localeCompare(second.name)),
     needsReviewTransactions: classified.filter(entry => entry.status === "needsReview")
+      .map(entry => entry.publicTransaction)
+      .sort((first, second) => second.date.localeCompare(first.date) || first.name.localeCompare(second.name)),
+    excludedTransactions: classified.filter(entry => entry.status === "excluded")
       .map(entry => entry.publicTransaction)
       .sort((first, second) => second.date.localeCompare(first.date) || first.name.localeCompare(second.name)),
     projectedMonthEnd: supportedSources.length === 0 ? null :

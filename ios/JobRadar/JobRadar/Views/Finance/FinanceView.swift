@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Charts
 import SwiftUI
+import UIKit
 
 /// One-glance money view for every institution the user explicitly connects.
 /// Plaid Hosted Link handles OAuth; Orbit displays only the normalized backend
@@ -10,6 +11,7 @@ struct FinanceView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var finance: FinanceRepository
     @AppStorage("orbit.ai.financeContextEnabled") private var shareWithAssistant = false
+    @AppStorage("orbit.ai.financeAutoOrganizeEnabled") private var autoOrganizeWithAI = false
 
     @State private var isPreparingLink = false
     @State private var errorMessage: String?
@@ -54,7 +56,10 @@ struct FinanceView: View {
                 Task { await finance.resumeHostedLinkIfNeeded() }
             }
             .onChange(of: app.connections.aiConnected) { _, connected in
-                if connected { finance.organizeUnknownTransactions() }
+                if connected, autoOrganizeWithAI { finance.organizeFinancesWithAI() }
+            }
+            .onChange(of: autoOrganizeWithAI) { _, enabled in
+                finance.setAutomaticAIOrganization(enabled: enabled)
             }
             .onChange(of: finance.hostedLinkNotice) { _, notice in
                 guard let notice else { return }
@@ -174,7 +179,9 @@ struct FinanceView: View {
                 spending: spending,
                 isOrganizing: finance.isSmartCategorizing,
                 learnedMerchantCount: finance.learnedMerchantCategoryCount,
-                categorizationMessage: finance.smartCategorizationMessage
+                categorizationMessage: finance.smartCategorizationMessage,
+                automaticOrganizationEnabled: autoOrganizeWithAI,
+                isAIAvailable: app.connections.aiConnected
             )
             spendingSection(overview, analysis: spending)
             recurringPaymentsSection(overview)
@@ -546,10 +553,24 @@ struct FinanceView: View {
 
     private var privacyCard: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Toggle("Auto-sort income & payments with AI", isOn: $autoOrganizeWithAI)
+                .font(.subheadline.weight(.semibold))
+                .tint(AppTheme.brand)
+            Text("When on, Orbit analyzes compact transaction and merchant summaries, sorts new activity automatically, and remembers your corrections. Bank credentials and account numbers are never sent.")
+                .font(.caption)
+                .foregroundStyle(AppTheme.secondaryText)
+            if autoOrganizeWithAI, !app.connections.aiConnected {
+                Label("Waiting for OpenAI processing. Connect it from More → Settings to start automatic sorting.", systemImage: "key")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.warning)
+            }
+
+            Divider().overlay(AppTheme.separator)
+
             Toggle("Allow Finance summary in Assistant", isOn: $shareWithAssistant)
                 .font(.subheadline.weight(.semibold))
                 .tint(AppTheme.brand)
-            Text("Off by default. When enabled, Orbit sends compact totals and relevant transaction summaries to your configured AI—never Plaid tokens or bank credentials.")
+            Text("This separate switch lets Orbit Chat and voice use compact Finance totals when you ask about your money.")
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
         }
@@ -790,6 +811,8 @@ private struct FinanceSmartInsightCard: View {
     var isOrganizing = false
     var learnedMerchantCount = 0
     var categorizationMessage: String? = nil
+    var automaticOrganizationEnabled = false
+    var isAIAvailable = false
 
     private var recurringShare: Double {
         guard spending.period == .thisMonth, spending.totalSpent > 0 else { return 0 }
@@ -876,17 +899,17 @@ private struct FinanceSmartInsightCard: View {
                     }
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
-                } else if learnedMerchantCount > 0 {
-                    Label(
-                        "\(learnedMerchantCount) learned merchant categor\(learnedMerchantCount == 1 ? "y" : "ies") are reused automatically.",
-                        systemImage: "brain.head.profile"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText)
                 } else if let categorizationMessage {
                     Label(categorizationMessage, systemImage: "sparkles")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
+                } else if learnedMerchantCount > 0 {
+                    Label(
+                        "\(learnedMerchantCount) learned merchant pattern\(learnedMerchantCount == 1 ? "" : "s") organize categories and recurring payments automatically.",
+                        systemImage: "brain.head.profile"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
                 }
                 Label(
                     "Food & Drink stays separate. Card payments, transfers and pending charges are excluded.",
@@ -900,9 +923,11 @@ private struct FinanceSmartInsightCard: View {
     }
 
     private var intelligenceStatus: String {
+        if !automaticOrganizationEnabled { return "AI OFF" }
+        if !isAIAvailable { return "AI NOT CONNECTED" }
         if isOrganizing { return "ORGANIZING" }
         if learnedMerchantCount > 0 { return "\(learnedMerchantCount) LEARNED" }
-        return "AUTO-UPDATED"
+        return "READY"
     }
 
     private func insightDescription(_ category: FinanceSpendingBreakdown) -> String {
@@ -1447,6 +1472,7 @@ private struct FinanceTransactionsView: View {
     @State private var filter: FinanceTransactionFilter = .all
     @State private var selectedCurrencyCode = ""
     @State private var searchText = ""
+    @State private var transactionToOrganize: FinanceTransaction?
 
     private var transactions: [FinanceTransaction] {
         finance.overview?.recentTransactions ?? []
@@ -1470,6 +1496,12 @@ private struct FinanceTransactionsView: View {
     private var reviewIncomeIDs: Set<String> {
         Set(finance.incomeOverview?.summaries
             .flatMap { $0.needsReviewTransactions }
+            .map(\.id) ?? [])
+    }
+
+    private var excludedIncomeIDs: Set<String> {
+        Set(finance.incomeOverview?.summaries
+            .flatMap { $0.excludedTransactions ?? [] }
             .map(\.id) ?? [])
     }
 
@@ -1596,10 +1628,18 @@ private struct FinanceTransactionsView: View {
                                         .padding(.horizontal, AppTheme.Spacing.xs)
                                     VStack(spacing: 0) {
                                         ForEach(Array(month.transactions.enumerated()), id: \.element.id) { index, transaction in
-                                            FinanceTransactionRow(
-                                                transaction: transaction,
-                                                badge: badge(for: transaction)
-                                            )
+                                            Button {
+                                                transactionToOrganize = transaction
+                                            } label: {
+                                                FinanceTransactionRow(
+                                                    transaction: transaction,
+                                                    badge: badge(for: transaction),
+                                                    showsDisclosure: true
+                                                )
+                                                .contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityHint("Opens controls to correct how this transaction is organized")
                                             if index < month.transactions.count - 1 {
                                                 Divider().overlay(AppTheme.separator)
                                             }
@@ -1629,6 +1669,15 @@ private struct FinanceTransactionsView: View {
         .onAppear {
             if !currencyCodes.contains(selectedCurrencyCode) {
                 selectedCurrencyCode = currencyCodes.first ?? ""
+            }
+        }
+        .sheet(item: $transactionToOrganize) { transaction in
+            if transaction.direction == .inflow {
+                IncomeClassificationSheet(transaction: incomeTransaction(for: transaction))
+                    .environmentObject(finance)
+            } else {
+                FinanceTransactionOrganizerSheet(transaction: transaction)
+                    .environmentObject(finance)
             }
         }
     }
@@ -1774,7 +1823,41 @@ private struct FinanceTransactionsView: View {
         if reviewIncomeIDs.contains(transaction.id) {
             return FinanceTransactionBadge(text: "Review", tint: AppTheme.warning)
         }
+        if excludedIncomeIDs.contains(transaction.id) {
+            return FinanceTransactionBadge(text: "Other", tint: AppTheme.secondaryText)
+        }
         return FinanceTransactionBadge(text: "Deposit", tint: AppTheme.secondaryText)
+    }
+
+    private func incomeTransaction(for transaction: FinanceTransaction) -> IncomeTransaction {
+        let knownTransactions = finance.incomeOverview?.summaries.flatMap {
+            $0.confirmedTransactions
+                + $0.needsReviewTransactions
+                + ($0.excludedTransactions ?? [])
+        } ?? []
+        if let known = knownTransactions.first(where: { $0.id == transaction.id }) {
+            return known
+        }
+        return IncomeTransaction(
+            id: transaction.id,
+            accountID: transaction.accountID,
+            date: transaction.date,
+            authorizedDate: nil,
+            name: transaction.name,
+            merchantName: transaction.merchantName,
+            category: transaction.category,
+            amount: Decimal(transaction.amount),
+            direction: .inflow,
+            pending: transaction.pending,
+            currencyCode: transaction.currencyCode,
+            sourceName: nil,
+            sourceType: nil,
+            confidence: 0,
+            classificationReason: nil,
+            userConfirmed: false,
+            classification: nil,
+            basis: .observedNetDeposit
+        )
     }
 
     private func money(_ amount: Double) -> String {
@@ -2154,6 +2237,7 @@ private struct FinanceInstitutionMark: View {
 private struct FinanceTransactionRow: View {
     var transaction: FinanceTransaction
     var badge: FinanceTransactionBadge? = nil
+    var showsDisclosure = false
 
     private var displayedBadge: FinanceTransactionBadge? {
         if let badge { return badge }
@@ -2210,13 +2294,147 @@ private struct FinanceTransactionRow: View {
                         : (transaction.direction == .inflow ? AppTheme.success : AppTheme.primaryText)
                 )
                 .monospacedDigit()
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AppTheme.tertiaryText)
+            }
         }
         .padding(AppTheme.Spacing.lg)
     }
 }
 
+private struct FinanceTransactionOrganizerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var finance: FinanceRepository
+
+    let transaction: FinanceTransaction
+
+    @State private var useAutomaticCategory = true
+    @State private var category: FinanceSmartCategory
+    @State private var recurringDecision = FinanceRecurringDecision.automatic
+    @State private var loadedSavedChoices = false
+    @State private var errorMessage: String?
+
+    init(transaction: FinanceTransaction) {
+        self.transaction = transaction
+        _category = State(initialValue: FinanceSmartCategory.allCases.first {
+            $0.rawValue.caseInsensitiveCompare(transaction.displayCategory) == .orderedSame
+        } ?? .other)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Transaction") {
+                    LabeledContent("Merchant", value: transaction.displayName)
+                    LabeledContent(
+                        "Amount",
+                        value: transaction.amount.formatted(
+                            .currency(code: transaction.currencyCode)
+                                .precision(.fractionLength(0...2))
+                        )
+                    )
+                    LabeledContent("Date", value: transaction.date)
+                }
+
+                if transaction.countsAsSpending {
+                    Section {
+                        Toggle("Let Orbit choose", isOn: $useAutomaticCategory)
+                        if useAutomaticCategory {
+                            LabeledContent("Current", value: transaction.displayCategory)
+                            if transaction.categorySource == .ai {
+                                Label("Initially sorted by AI", systemImage: "sparkles")
+                                    .font(.caption)
+                                    .foregroundStyle(AppTheme.secondaryText)
+                            }
+                        } else {
+                            Picker("Category", selection: $category) {
+                                ForEach(FinanceSmartCategory.allCases, id: \.self) { category in
+                                    Text(category.rawValue).tag(category)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Spending category")
+                    } footer: {
+                        Text("Your category choice is reused for future purchases from this merchant. Choose automatic anytime to return control to Orbit.")
+                    }
+
+                    Section {
+                        Picker("Payment pattern", selection: $recurringDecision) {
+                            Text("Let Orbit decide").tag(FinanceRecurringDecision.automatic)
+                            Text("Recurring payment").tag(FinanceRecurringDecision.recurring)
+                            Text("Not recurring").tag(FinanceRecurringDecision.notRecurring)
+                        }
+                    } header: {
+                        Text("Recurring")
+                    } footer: {
+                        Text("This moves the merchant into or out of Recurring without deleting the bank transaction.")
+                    }
+                } else {
+                    Section {
+                        Label("Transfers, debt payments, and refunds keep their accounting type so they are not counted as new spending.", systemImage: "lock.shield")
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                }
+            }
+            .navigationTitle("Organize transaction")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                if transaction.countsAsSpending {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save", action: save)
+                            .fontWeight(.semibold)
+                    }
+                }
+            }
+            .alert("Organize transaction", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "Try again.")
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .onAppear(perform: loadSavedChoices)
+    }
+
+    private func loadSavedChoices() {
+        guard !loadedSavedChoices else { return }
+        loadedSavedChoices = true
+        if let savedCategory = finance.userCategory(for: transaction) {
+            category = savedCategory
+            useAutomaticCategory = false
+        }
+        recurringDecision = finance.recurringDecision(for: transaction)
+    }
+
+    private func save() {
+        let saved = finance.organize(
+            transaction: transaction,
+            category: useAutomaticCategory ? nil : category,
+            recurringDecision: recurringDecision
+        )
+        guard saved else {
+            errorMessage = "Orbit could not save that correction securely."
+            return
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        dismiss()
+    }
+}
+
 private struct FinanceRecurringPaymentRow: View {
     var payment: FinanceRecurringPayment
+    var isIgnored = false
+    var showsDisclosure = false
 
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
@@ -2231,11 +2449,30 @@ private struct FinanceRecurringPaymentRow: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AppTheme.primaryText)
                         .lineLimit(1)
-                    if !payment.isConfirmed {
-                        Tag(text: "Review", tint: AppTheme.warning)
+                    if isIgnored {
+                        Tag(text: "Not recurring", tint: AppTheme.secondaryText)
+                        if payment.detectionSource == .ai {
+                            Tag(text: "AI", tint: AppTheme.brand)
+                        } else if payment.detectionSource == .user {
+                            Tag(text: "Moved out", tint: AppTheme.primaryText)
+                        }
+                    } else {
+                        if !payment.isConfirmed {
+                            Tag(text: "Review", tint: AppTheme.warning)
+                        }
+                        if payment.detectionSource == .ai {
+                            Tag(text: "AI", tint: AppTheme.brand)
+                        } else if payment.detectionSource == .user {
+                            Tag(text: "You", tint: AppTheme.primaryText)
+                        }
                     }
                 }
-                if payment.isConfirmed {
+                if isIgnored {
+                    Text(ignoredDetail)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(2)
+                } else if payment.isConfirmed {
                     HStack(spacing: 5) {
                         Text(payment.cadence.label)
                         if payment.isVariable { Text("· Variable") }
@@ -2266,7 +2503,11 @@ private struct FinanceRecurringPaymentRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppTheme.primaryText)
                     .monospacedDigit()
-                if !payment.isConfirmed {
+                if isIgnored {
+                    Text("typical charge")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.secondaryText)
+                } else if !payment.isConfirmed {
                     Text("last charge")
                         .font(.caption2)
                         .foregroundStyle(AppTheme.secondaryText)
@@ -2275,6 +2516,12 @@ private struct FinanceRecurringPaymentRow: View {
                         .font(.caption2)
                         .foregroundStyle(AppTheme.secondaryText)
                 }
+            }
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .padding(.top, 4)
             }
         }
         .padding(AppTheme.Spacing.lg)
@@ -2291,6 +2538,17 @@ private struct FinanceRecurringPaymentRow: View {
         return "repeat"
     }
 
+    private var ignoredDetail: String {
+        switch payment.detectionSource {
+        case .user:
+            "Moved out by you · excluded from the monthly total"
+        case .ai:
+            "Sorted as not recurring by AI · excluded from the monthly total"
+        case .history, .merchantKnowledge, .merchantAndHistory, .none:
+            "Not recurring · excluded from the monthly total"
+        }
+    }
+
     private func money(_ amount: Double) -> String {
         amount.formatted(.currency(code: payment.currencyCode).precision(.fractionLength(0...2)))
     }
@@ -2298,6 +2556,8 @@ private struct FinanceRecurringPaymentRow: View {
 
 private struct RecurringPaymentsView: View {
     @EnvironmentObject private var finance: FinanceRepository
+    @State private var paymentToOrganize: FinanceRecurringPayment?
+    @State private var showingMovedOut = false
 
     var body: some View {
         ScrollView {
@@ -2312,6 +2572,10 @@ private struct RecurringPaymentsView: View {
         .refreshable {
             await finance.load(showLoading: false, forceRefresh: true)
         }
+        .sheet(item: $paymentToOrganize) { payment in
+            RecurringPaymentOrganizerSheet(payment: payment)
+                .environmentObject(finance)
+        }
     }
 
     @ViewBuilder
@@ -2321,7 +2585,8 @@ private struct RecurringPaymentsView: View {
             let payments = overview.detectedRecurringPayments
             let confirmed = overview.confirmedRecurringPayments
             let possible = overview.possibleSubscriptions
-            if payments.isEmpty {
+            let ignored = overview.ignoredRecurringPayments
+            if payments.isEmpty && ignored.isEmpty {
                 InfoStateView(
                     systemImage: "repeat",
                     title: "No recurring payments detected",
@@ -2343,6 +2608,22 @@ private struct RecurringPaymentsView: View {
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                     }
+                }
+                if !ignored.isEmpty {
+                    DisclosureGroup(isExpanded: $showingMovedOut) {
+                        paymentList(title: "", payments: ignored, isIgnored: true)
+                            .padding(.top, AppTheme.Spacing.sm)
+                    } label: {
+                        HStack {
+                            Label("Not recurring", systemImage: "tray")
+                            Spacer()
+                            Text("\(ignored.count)")
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                    .tint(AppTheme.primaryText)
+                    .cardSurface()
                 }
                 detectionNote
             }
@@ -2432,19 +2713,32 @@ private struct RecurringPaymentsView: View {
 
     private func paymentList(
         title: String,
-        payments: [FinanceRecurringPayment]
+        payments: [FinanceRecurringPayment],
+        isIgnored: Bool = false
     ) -> some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: title)
+            if !title.isEmpty { SectionHeader(title: title) }
             VStack(spacing: 0) {
                 ForEach(Array(payments.enumerated()), id: \.element.id) { index, payment in
-                    FinanceRecurringPaymentRow(payment: payment)
+                    Button {
+                        paymentToOrganize = payment
+                    } label: {
+                        FinanceRecurringPaymentRow(
+                            payment: payment,
+                            isIgnored: isIgnored,
+                            showsDisclosure: true
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(isIgnored ? "Opens controls to restore this recurring payment" : "Opens controls to move this payment")
                     if index < payments.count - 1 {
                         Divider().overlay(AppTheme.separator)
                     }
                 }
             }
             .cardSurface(padding: 0)
+            .animation(.snappy(duration: 0.32), value: payments.map(\.id))
         }
     }
 
@@ -2466,7 +2760,7 @@ private struct RecurringPaymentsView: View {
             Label("How estimates work", systemImage: "sparkles")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppTheme.primaryText)
-            Text("Confirmed payments use timing and amount consistency. Merchant-based suggestions stay separate until more history arrives, and never enter the monthly total. Future dates remain estimates.")
+            Text("Orbit combines timing, merchant evidence, and AI. Confident decisions are organized automatically; uncertain suggestions stay out of the monthly total. Tap any row to correct it—your decision always wins.")
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
         }
@@ -2475,6 +2769,91 @@ private struct RecurringPaymentsView: View {
 
     private func money(_ amount: Double, code: String) -> String {
         amount.formatted(.currency(code: code).precision(.fractionLength(0...2)))
+    }
+}
+
+private struct RecurringPaymentOrganizerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var finance: FinanceRepository
+
+    let payment: FinanceRecurringPayment
+
+    @State private var decision = FinanceRecurringDecision.automatic
+    @State private var loadedSavedChoice = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Payment") {
+                    LabeledContent("Merchant", value: payment.name)
+                    LabeledContent(
+                        "Typical charge",
+                        value: payment.amount.formatted(
+                            .currency(code: payment.currencyCode)
+                                .precision(.fractionLength(0...2))
+                        )
+                    )
+                    LabeledContent("Detected cadence", value: payment.cadence.label)
+                    if payment.detectionSource == .ai {
+                        LabeledContent("Initial decision") {
+                            Label("Orbit AI", systemImage: "sparkles")
+                        }
+                    }
+                    LabeledContent(
+                        "Confidence",
+                        value: payment.confidence.formatted(.percent.precision(.fractionLength(0)))
+                    )
+                }
+
+                Section {
+                    Picker("Place this merchant", selection: $decision) {
+                        Text("Let Orbit decide").tag(FinanceRecurringDecision.automatic)
+                        Text("Recurring payment").tag(FinanceRecurringDecision.recurring)
+                        Text("Not recurring").tag(FinanceRecurringDecision.notRecurring)
+                    }
+                    .pickerStyle(.inline)
+                } header: {
+                    Text("Your decision")
+                } footer: {
+                    Text("Moving this out only changes Finance organization and estimates. It never deletes or edits the bank transaction.")
+                }
+            }
+            .navigationTitle("Organize payment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: save)
+                        .fontWeight(.semibold)
+                }
+            }
+            .alert("Organize payment", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "Try again.")
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .onAppear {
+            guard !loadedSavedChoice else { return }
+            loadedSavedChoice = true
+            decision = finance.recurringDecision(for: payment)
+        }
+    }
+
+    private func save() {
+        guard finance.setRecurringDecision(decision, for: payment) else {
+            errorMessage = "Orbit could not save that correction securely."
+            return
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        dismiss()
     }
 }
 

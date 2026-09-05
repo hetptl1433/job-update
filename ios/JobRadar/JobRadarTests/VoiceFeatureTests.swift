@@ -188,4 +188,15 @@ final class OrbitPendingLaunchStoreTests: XCTestCase {
         XCTAssertEqual(OrbitPendingLaunchStore.consume(defaults: defaults), .voice)
         XCTAssertNil(OrbitPendingLaunchStore.consume(defaults: defaults))
     }
+
+    func testQuickTaskLaunchRequestIsConsumedExactlyOnce() throws {
+        let suiteName = "OrbitPendingQuickTaskLaunchStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        OrbitPendingLaunchStore.request(.quickTaskCapture, defaults: defaults)
+
+        XCTAssertEqual(OrbitPendingLaunchStore.consume(defaults: defaults), .quickTaskCapture)
+        XCTAssertNil(OrbitPendingLaunchStore.consume(defaults: defaults))
+    }
 }

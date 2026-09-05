@@ -4,6 +4,7 @@ import SwiftUI
 /// The command center. Answers "what do I need to do right now?" with To Do as
 /// the dominant first surface, followed by the rest of the day's context.
 struct HomeView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var inbox: EmailRepository
     @EnvironmentObject private var tasks: TaskRepository
@@ -15,6 +16,8 @@ struct HomeView: View {
     @State private var showHealth = false
     @State private var editingTask: TaskItem?
     @State private var placeholderIndex = 0
+    @State private var completingTaskIDs: Set<UUID> = []
+    @State private var completionFeedback = 0
 
     private let placeholders = [
         "Anything important today?",
@@ -87,6 +90,7 @@ struct HomeView: View {
                 }
             }
         }
+        .sensoryFeedback(.success, trigger: completionFeedback)
     }
 
     // MARK: Greeting
@@ -207,7 +211,7 @@ struct HomeView: View {
                         .foregroundStyle(AppTheme.secondaryText)
                 }
                 Spacer()
-                Button { editingTask = TaskItem(title: "") } label: {
+                Button { app.quickTaskCaptureRequested = true } label: {
                     Image(systemName: "plus")
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(AppTheme.onBrand)
@@ -234,7 +238,7 @@ struct HomeView: View {
                             .foregroundStyle(AppTheme.secondaryText)
                     }
                     Button {
-                        app.selectedTab = .tasks
+                        app.quickTaskCaptureRequested = true
                     } label: {
                         Label("Add your first task", systemImage: "plus")
                     }
@@ -246,8 +250,15 @@ struct HomeView: View {
                     ForEach(Array(tasks.prioritizedOpen.prefix(7).enumerated()), id: \.element.id) { index, task in
                         HomeTaskRow(
                             item: task,
-                            onToggle: { tasks.toggle(task) },
+                            isCompleting: completingTaskIDs.contains(task.id),
+                            onToggle: { complete(task) },
                             onEdit: { editingTask = task }
+                        )
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity,
+                                removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .leading))
+                            )
                         )
                         if index < min(tasks.prioritizedOpen.count, 7) - 1 {
                             Divider().overlay(AppTheme.separator)
@@ -294,6 +305,29 @@ struct HomeView: View {
             return "\(openCount) open · \(dueTodayCount) due today"
         }
         return "\(openCount) open"
+    }
+
+    private func complete(_ item: TaskItem) {
+        guard !completingTaskIDs.contains(item.id) else { return }
+        withAnimation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.68)) {
+            _ = completingTaskIDs.insert(item.id)
+        }
+
+        let delay = reduceMotion ? 0 : 0.28
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard let current = tasks.tasks.first(where: { $0.id == item.id }),
+                  !current.isCompleted else {
+                completingTaskIDs.remove(item.id)
+                return
+            }
+            let didComplete = withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                tasks.setCompletion(current.id, isCompleted: true)
+            }
+            if didComplete { completionFeedback += 1 }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                _ = completingTaskIDs.remove(item.id)
+            }
+        }
     }
 
     // MARK: Needs your attention
@@ -557,28 +591,30 @@ struct HomeView: View {
 
 private struct HomeTaskRow: View {
     let item: TaskItem
+    var isCompleting = false
     let onToggle: () -> Void
     let onEdit: () -> Void
 
+    private var showsCompletedState: Bool { item.isCompleted || isCompleting }
+
     var body: some View {
         HStack(alignment: .center, spacing: AppTheme.Spacing.md) {
-            Button(action: onToggle) {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(item.isCompleted ? AppTheme.success : AppTheme.brand)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(item.isCompleted ? "Mark incomplete" : "Mark complete")
+            TaskCompletionControl(
+                title: item.title,
+                isCompleted: item.isCompleted,
+                isCompleting: isCompleting,
+                idleColor: AppTheme.brand,
+                iconFont: .title2,
+                onToggle: onToggle
+            )
 
             Button(action: onEdit) {
                 HStack(spacing: AppTheme.Spacing.md) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                         Text(item.title)
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(item.isCompleted ? AppTheme.tertiaryText : AppTheme.primaryText)
-                            .strikethrough(item.isCompleted)
+                            .foregroundStyle(showsCompletedState ? AppTheme.tertiaryText : AppTheme.primaryText)
+                            .strikethrough(showsCompletedState)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         if !item.notes.isEmpty {
@@ -622,6 +658,8 @@ private struct HomeTaskRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isCompleting)
+            .opacity(isCompleting ? 0.48 : 1)
             .accessibilityLabel("Edit \(item.title)")
         }
         .padding(.vertical, AppTheme.Spacing.sm)
