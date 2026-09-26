@@ -6,6 +6,7 @@ struct HealthView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var health: HealthRepository
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.orbitWideLayout) private var isWide
     @State private var selectedRange: HealthTimeRange = .today
     @State private var showSources = false
     @State private var showAIConsent = false
@@ -14,44 +15,33 @@ struct HealthView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
-                    switch health.state {
-                    case .loaded(let summary):
-                        dashboard(summary)
-                    case .loading:
-                        LoadingStateView(message: "Reading Apple Health…")
-                    case .empty:
-                        emptyState
-                    case .failed(let message):
-                        InfoStateView(
-                            systemImage: "exclamationmark.triangle",
-                            title: "Couldn't load Health",
-                            message: message,
-                            actionTitle: "Try again"
-                        ) { Task { await app.connectHealth() } }
-                        .cardSurface()
-                    default:
-                        connectState
+                // The dashboard holds many charts. A lazy stack lays out only
+                // what's on screen; measuring every chart at once in
+                // OrbitColumns made the phone layout slow enough to freeze.
+                // Only a wide iPad, with room for two columns, uses it.
+                Group {
+                    if isWide {
+                        OrbitColumns { pageContent }
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xl) { pageContent }
                     }
                 }
-                .padding(AppTheme.Spacing.lg)
-                .padding(.bottom, AppTheme.Spacing.xl)
+                .padding(.horizontal, AppTheme.Spacing.page)
+                .padding(.top, AppTheme.Spacing.lg)
+                .padding(.bottom, AppTheme.Spacing.xxl)
+                // Switching Today / 7 Days morphs values, rings, and charts.
+                .animation(.smooth(duration: 0.35), value: selectedRange)
             }
             .background(AppTheme.background)
-            .navigationTitle("Health")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showSources = true } label: {
-                        Image(systemName: "applewatch")
-                    }
-                    .accessibilityLabel("Health sources and privacy")
-                }
+            .orbitNavigationChrome()
+            // Pull to refresh re-reads data. Permission checks stay with the
+            // connect buttons and "Check for New Categories".
+            .refreshable {
+                if app.connections.healthConnected { await health.refresh() } else { await app.connectHealth() }
             }
-            .refreshable { await app.connectHealth() }
+            // Opens from the heading in every state, so it must never be blank.
             .sheet(isPresented: $showSources) {
-                if case let .loaded(summary) = health.state {
-                    HealthSourcesView(summary: summary)
-                }
+                HealthSourcesView(summary: health.state.value, isConnected: app.connections.healthConnected)
             }
             .confirmationDialog(
                 "Analyze this Health summary with Orbit AI?",
@@ -69,31 +59,68 @@ struct HealthView: View {
             .task {
                 // Re-request the complete read-only set after new categories are
                 // added. HealthKit prompts only for choices not seen before.
-                if app.connections.healthConnected { await app.connectHealth() }
+                // Coming back from a detail page within a minute keeps what's shown.
+                guard app.connections.healthConnected else { return }
+                if let updated = health.state.value?.updatedAt, Date.now.timeIntervalSince(updated) < 60 { return }
+                await app.connectHealth()
             }
         }
     }
 
     @ViewBuilder
+    private var pageContent: some View {
+        OrbitPageHeading(
+            title: "Health",
+            subtitle: "A clearer picture of you.",
+            actionTitle: "Health sources and privacy",
+            symbol: "applewatch",
+            action: { showSources = true }
+        )
+        switch health.state {
+        case .loaded(let summary):
+            dashboard(summary)
+        case .loading:
+            HealthLoadingSkeleton()
+                .transition(.opacity)
+        case .empty:
+            emptyState
+        case .failed(let message):
+            InfoStateView(
+                systemImage: "exclamationmark.triangle",
+                title: "Couldn't load Health",
+                message: message,
+                actionTitle: "Try again"
+            ) { Task { await app.connectHealth() } }
+            .cardSurface()
+        default:
+            connectState
+        }
+    }
+
+    @ViewBuilder
     private func dashboard(_ summary: HealthSummary) -> some View {
-        sourceChip(summary)
+        // Computed once per render; three sections read it.
+        let analytics = summary.analytics()
+        sourceChip(summary).orbitAppear(0)
 
         VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
             Text("VIEW").sectionLabel()
             HealthRangePicker(selection: $selectedRange)
                 .tint(AppTheme.accent)
         }
+        .orbitAppear(1)
 
-        overallTrendHero(summary)
-        bodyLoadSection(summary)
-        insightCard(summary)
-        activitySection(summary)
-        vitalsSection(summary)
-        sleepSection(summary)
-        workoutSection(summary)
-        mobilitySection(summary)
-        bodySection(summary)
-        mindfulnessSection(summary)
+        overallTrendHero(summary, analytics: analytics).orbitAppear(2)
+        // On a wide iPad: movement and vitals on the left, recovery on the right.
+        activitySection(summary).orbitAppear(3).orbitColumn(.leading)
+        bodyLoadSection(analytics.bodyLoad).orbitAppear(3).orbitColumn(.trailing)
+        vitalsSection(summary).orbitAppear(4).orbitColumn(.leading)
+        sleepSection(summary).orbitAppear(4).orbitColumn(.trailing)
+        insightCard(summary, analytics: analytics).orbitAppear(5).orbitColumn(.leading)
+        workoutSection(summary).orbitAppear(5).orbitColumn(.trailing)
+        mobilitySection(summary).orbitAppear(6).orbitColumn(.leading)
+        bodySection(summary).orbitAppear(6).orbitColumn(.trailing)
+        mindfulnessSection(summary).orbitAppear(7).orbitColumn(.leading)
 
         Text("Orbit shows recorded patterns for awareness only. Body Load is an app estimate—not measured psychological stress, readiness, medical advice, or a diagnosis.")
             .font(.caption2)
@@ -112,21 +139,28 @@ struct HealthView: View {
                     .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Apple Health").font(.subheadline.weight(.semibold))
-                    Text("Refreshed \(summary.updatedAt.relativeShort)")
+                    Text(health.isRefreshing ? "Refreshing…" : "Refreshed \(summary.updatedAt.relativeShort)")
                         .font(.caption2).foregroundStyle(AppTheme.secondaryText)
+                        .contentTransition(.opacity)
                 }
                 Spacer()
-                Circle().fill(AppTheme.success).frame(width: 6, height: 6)
+                if health.isRefreshing {
+                    ProgressView().controlSize(.mini).tint(AppTheme.secondaryText)
+                        .transition(.opacity.combined(with: .scale))
+                } else {
+                    Circle().fill(AppTheme.success).frame(width: 6, height: 6)
+                        .transition(.opacity.combined(with: .scale))
+                }
                 Text("Connected").font(.caption2.weight(.semibold)).foregroundStyle(AppTheme.secondaryText)
                 Image(systemName: "chevron.right").font(.caption2).foregroundStyle(AppTheme.tertiaryText)
             }
+            .animation(.easeInOut(duration: 0.25), value: health.isRefreshing)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(OrbitPressStyle())
     }
 
-    private func overallTrendHero(_ summary: HealthSummary) -> some View {
-        let analytics = summary.analytics()
+    private func overallTrendHero(_ summary: HealthSummary, analytics: HealthAnalyticsResult) -> some View {
         let score = summary.dailyBalanceScore
         let isToday = selectedRange == .today
         let title = isToday ? balanceTitle(score) : analytics.overallTrend.title
@@ -187,26 +221,7 @@ struct HealthView: View {
     }
 
     private func trendBadge(value: String, progress: Double?) -> some View {
-        ZStack {
-            Circle().stroke(.white.opacity(0.09), lineWidth: 8)
-            if let progress {
-                Circle()
-                    .trim(from: 0, to: min(max(progress, 0), 1))
-                    .stroke(AppTheme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            } else {
-                Circle()
-                    .trim(from: 0.08, to: 0.92)
-                    .stroke(AppTheme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-            Text(value)
-                .font(.system(size: value.count > 2 ? 31 : 39, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(width: 112, height: 112)
-        .accessibilityHidden(true)
+        HealthTrendBadge(value: value, progress: progress)
     }
 
     private func trendCopy(
@@ -243,8 +258,7 @@ struct HealthView: View {
         }
     }
 
-    private func bodyLoadSection(_ summary: HealthSummary) -> some View {
-        let estimate = summary.analytics().bodyLoad
+    private func bodyLoadSection(_ estimate: HealthLoadEstimate) -> some View {
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             SectionHeader(title: "Stress Signals")
             NavigationLink(destination: HealthBodyLoadDetailView(estimate: estimate)) {
@@ -299,7 +313,7 @@ struct HealthView: View {
                 }
                 .cardSurface()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(OrbitPressStyle())
         }
     }
 
@@ -323,8 +337,8 @@ struct HealthView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func insightCard(_ summary: HealthSummary) -> some View {
-        let insight = localInsight(summary)
+    private func insightCard(_ summary: HealthSummary, analytics: HealthAnalyticsResult) -> some View {
+        let insight = localInsight(summary, analytics: analytics)
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
                 Image(systemName: "sparkles")
@@ -404,7 +418,7 @@ struct HealthView: View {
                 }
                 .cardSurface()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(OrbitPressStyle())
         }
     }
 
@@ -421,15 +435,27 @@ struct HealthView: View {
 
     private func vitalsSection(_ summary: HealthSummary) -> some View {
         let vitals = vitalItems(summary)
-        let minimum: CGFloat = dynamicTypeSize.isAccessibilitySize ? 260 : 150
+        let columnCount = dynamicTypeSize.isAccessibilitySize ? 1 : 2
+        let rows = stride(from: 0, to: vitals.count, by: columnCount).map {
+            Array(vitals[$0..<min($0 + columnCount, vitals.count)])
+        }
         return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             sectionTitle("Vitals")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: minimum), spacing: AppTheme.Spacing.sm)], spacing: AppTheme.Spacing.sm) {
-                ForEach(vitals) { vital in
-                    NavigationLink(destination: HealthSignalDetailView(vital: vital, initialRange: selectedRange)) {
-                        HealthVitalCard(vital: vital, range: selectedRange)
+            // A plain Grid, not LazyVGrid: a lazy grid measured inside
+            // OrbitColumns can re-measure without end and freeze the screen.
+            Grid(horizontalSpacing: AppTheme.Spacing.sm, verticalSpacing: AppTheme.Spacing.sm) {
+                ForEach(rows.indices, id: \.self) { index in
+                    GridRow {
+                        ForEach(rows[index]) { vital in
+                            NavigationLink(destination: HealthSignalDetailView(vital: vital, initialRange: selectedRange)) {
+                                HealthVitalCard(vital: vital, range: selectedRange)
+                            }
+                            .buttonStyle(OrbitPressStyle())
+                        }
+                        if rows[index].count < columnCount {
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
@@ -451,6 +477,7 @@ struct HealthView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(duration.map(durationText) ?? "—")
                                 .font(.largeTitle.weight(.bold))
+                                .contentTransition(.numericText())
                             Text(selectedRange == .today ? "LATEST SLEEP" : "AVERAGE · \(nights.count) RECORDED NIGHTS")
                                 .sectionLabel()
                         }
@@ -480,7 +507,7 @@ struct HealthView: View {
                 }
                 .cardSurface()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(OrbitPressStyle())
         }
     }
 
@@ -504,14 +531,14 @@ struct HealthView: View {
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 3) {
-                        Text("\(workouts.count)").font(.title3.weight(.bold))
+                        Text("\(workouts.count)").font(.title3.weight(.bold)).contentTransition(.numericText())
                         Text("\(Int(minutes)) min total").font(.caption2).foregroundStyle(AppTheme.secondaryText)
                     }
                     Image(systemName: "chevron.right").font(.caption2).foregroundStyle(AppTheme.tertiaryText)
                 }
                 .cardSurface()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(OrbitPressStyle())
         }
     }
 
@@ -610,7 +637,7 @@ struct HealthView: View {
                 }
                 .cardSurface()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(OrbitPressStyle())
         }
     }
 
@@ -632,6 +659,7 @@ struct HealthView: View {
                 Spacer()
                 Text(value.map { "\(Int($0)) / \(Int(goal)) \(unit)" } ?? "No data")
                     .font(.caption2.weight(.semibold))
+                    .contentTransition(.numericText())
             }
             ProgressView(value: min(value ?? 0, max(goal, 1)), total: max(goal, 1)).tint(tint)
         }
@@ -640,6 +668,7 @@ struct HealthView: View {
     private func compactMetric(_ value: String, _ title: String) -> some View {
         VStack(spacing: 3) {
             Text(value).font(.subheadline.weight(.bold)).lineLimit(1).minimumScaleFactor(0.65)
+                .contentTransition(.numericText())
             Text(title).font(.caption2).foregroundStyle(AppTheme.secondaryText)
         }
         .frame(maxWidth: .infinity)
@@ -684,8 +713,7 @@ struct HealthView: View {
         )
     }
 
-    private func localInsight(_ summary: HealthSummary) -> (title: String, detail: String) {
-        let analytics = summary.analytics()
+    private func localInsight(_ summary: HealthSummary, analytics: HealthAnalyticsResult) -> (title: String, detail: String) {
         if analytics.bodyLoad.level == .higherThanUsual {
             let factor = analytics.bodyLoad.factors.first?.title.lowercased() ?? "multiple recorded signals"
             return ("Body-load signals are above baseline", "The largest recorded difference is in \(factor). Open Stress Signals to see the exact comparison and coverage.")
@@ -877,6 +905,39 @@ struct HealthView: View {
     }
 }
 
+/// The daily score ring. It fills from empty the first time it appears.
+private struct HealthTrendBadge: View {
+    let value: String
+    let progress: Double?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealed = false
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(.white.opacity(0.09), lineWidth: 8)
+            Circle()
+                .trim(from: progress == nil ? 0.08 : 0, to: revealed ? end : (progress == nil ? 0.08 : 0))
+                .stroke(AppTheme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .shadow(color: AppTheme.accent.opacity(revealed ? 0.35 : 0), radius: 6)
+            Text(value)
+                .font(.system(size: value.count > 2 ? 31 : 39, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.7)
+                .contentTransition(.numericText())
+        }
+        .frame(width: 112, height: 112)
+        .accessibilityHidden(true)
+        .animation(.spring(response: 0.6, dampingFraction: 0.85), value: end)
+        .onAppear { reveal($revealed, reduceMotion: reduceMotion) }
+    }
+
+    private var end: Double {
+        guard let progress else { return 0.92 }
+        return min(max(progress, 0), 1)
+    }
+}
+
 private struct HealthRings: View {
     let move: Double?
     let exercise: Double?
@@ -884,6 +945,8 @@ private struct HealthRings: View {
     let moveGoal: Double
     let exerciseGoal: Double
     let standGoal: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealed = false
 
     var body: some View {
         ZStack {
@@ -892,6 +955,8 @@ private struct HealthRings: View {
             ring(progress: (stand ?? 0) / max(standGoal, 1), color: AppTheme.info, width: 8).padding(30)
             Image(systemName: "bolt.fill").font(.caption).foregroundStyle(AppTheme.secondaryText)
         }
+        .animation(.spring(response: 0.6, dampingFraction: 0.85), value: [move, exercise, stand])
+        .onAppear { reveal($revealed, reduceMotion: reduceMotion) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Activity progress for Move, Exercise, and Stand")
     }
@@ -900,9 +965,22 @@ private struct HealthRings: View {
         ZStack {
             Circle().stroke(AppTheme.secondarySurface, lineWidth: width)
             Circle()
-                .trim(from: 0, to: min(max(progress, 0), 1))
+                .trim(from: 0, to: revealed ? min(max(progress, 0), 1) : 0)
                 .stroke(color, style: StrokeStyle(lineWidth: width, lineCap: .round))
                 .rotationEffect(.degrees(-90))
+        }
+    }
+}
+
+/// Sweeps a ring from empty to its value once, like Apple's activity rings.
+@MainActor
+private func reveal(_ revealed: Binding<Bool>, reduceMotion: Bool) {
+    guard !revealed.wrappedValue else { return }
+    if reduceMotion {
+        revealed.wrappedValue = true
+    } else {
+        withAnimation(.spring(response: 1.1, dampingFraction: 0.82).delay(0.15)) {
+            revealed.wrappedValue = true
         }
     }
 }
@@ -1000,8 +1078,80 @@ private struct SleepStageBar: View {
     }
 }
 
+/// Stands in for the dashboard during the first read, in the same shapes, so
+/// the page settles into place instead of jumping from a spinner.
+private struct HealthLoadingSkeleton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+            block(height: 34, width: 190)
+            RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                .fill(AppTheme.primarySurface)
+                .frame(height: 230)
+                .overlay(alignment: .leading) {
+                    HStack(spacing: AppTheme.Spacing.xl) {
+                        Circle()
+                            .stroke(AppTheme.secondarySurface, lineWidth: 8)
+                            .frame(width: 112, height: 112)
+                        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                            block(height: 18, width: 150)
+                            block(height: 12, width: 190)
+                            block(height: 12, width: 120)
+                        }
+                    }
+                    .padding(AppTheme.Spacing.lg)
+                }
+            HStack(spacing: AppTheme.Spacing.sm) {
+                card
+                card
+            }
+            card
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Reading Apple Health…")
+            }
+            .font(.caption)
+            .foregroundStyle(AppTheme.secondaryText)
+            .frame(maxWidth: .infinity)
+        }
+        .opacity(pulsing ? 0.55 : 1)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                pulsing = true
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Reading Apple Health")
+    }
+
+    private var card: some View {
+        RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+            .fill(AppTheme.primarySurface)
+            .frame(height: 150)
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                    block(height: 28, width: 28)
+                    block(height: 12, width: 80)
+                    block(height: 20, width: 60)
+                }
+                .padding(AppTheme.Spacing.md)
+            }
+    }
+
+    private func block(height: CGFloat, width: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(AppTheme.secondarySurface)
+            .frame(width: width, height: height)
+    }
+}
+
 private struct HealthSourcesView: View {
-    let summary: HealthSummary
+    /// Nil until a summary has loaded.
+    let summary: HealthSummary?
+    let isConnected: Bool
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var app: AppState
     @AppStorage("orbit.ai.healthContextEnabled") private var shareHealthWithAssistant = false
@@ -1010,11 +1160,28 @@ private struct HealthSourcesView: View {
         NavigationStack {
             List {
                 Section("Connection") {
-                    Label("Connected to Apple Health", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(AppTheme.success)
-                    LabeledContent("Latest refresh", value: summary.updatedAt.relativeShort)
-                    LabeledContent("Signals with data", value: "\(summary.availableSignalCount)")
-                    LabeledContent("Nightly sleep records", value: "\(summary.sleepHistory.count)")
+                    if isConnected {
+                        Label("Connected to Apple Health", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(AppTheme.success)
+                    } else {
+                        Label("Not connected", systemImage: "heart.slash")
+                            .foregroundStyle(AppTheme.secondaryText)
+                        Button {
+                            dismiss()
+                            Task { await app.connectHealth() }
+                        } label: {
+                            Label("Connect Apple Health", systemImage: "heart.fill")
+                        }
+                    }
+                    if let summary {
+                        LabeledContent("Latest refresh", value: summary.updatedAt.relativeShort)
+                        LabeledContent("Signals with data", value: "\(summary.availableSignalCount)")
+                        LabeledContent("Nightly sleep records", value: "\(summary.sleepHistory.count)")
+                    } else if isConnected {
+                        Text("No summary has loaded yet.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
                 }
                 Section("Privacy") {
                     Label("Read only", systemImage: "eye")

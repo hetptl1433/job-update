@@ -105,9 +105,26 @@ final class AppleCalendarService: CalendarProviderService {
             return nil
         }
 
+        let endDate = Calendar.current.date(byAdding: .minute, value: 30, to: dueDate)
+            ?? dueDate.addingTimeInterval(1_800)
+        let notes = taskNotes(task)
+        let url = URL(string: "orbit://tasks/\(task.id.uuidString)")
+
         let event: EKEvent
         if let identifier = task.appleCalendarEventID,
            let existing = store.event(withIdentifier: rawIdentifier(identifier)) {
+            // Every calendar refresh reconciles each open To Do. Saving an
+            // unchanged event still commits to the Calendar database and wakes
+            // calendar sync, so leave matching events alone.
+            if existing.title == task.title,
+               existing.startDate == dueDate,
+               existing.endDate == endDate,
+               !existing.isAllDay,
+               existing.notes == notes,
+               existing.url == url,
+               existing.alarms?.isEmpty ?? true {
+                return existing.eventIdentifier
+            }
             event = existing
         } else {
             guard let calendar = store.defaultCalendarForNewEvents else {
@@ -119,11 +136,10 @@ final class AppleCalendarService: CalendarProviderService {
 
         event.title = task.title
         event.startDate = dueDate
-        event.endDate = Calendar.current.date(byAdding: .minute, value: 30, to: dueDate)
-            ?? dueDate.addingTimeInterval(1_800)
+        event.endDate = endDate
         event.isAllDay = false
-        event.notes = taskNotes(task)
-        event.url = URL(string: "orbit://tasks/\(task.id.uuidString)")
+        event.notes = notes
+        event.url = url
         event.alarms = []
         try store.save(event, span: .thisEvent, commit: true)
         return event.eventIdentifier
@@ -197,7 +213,7 @@ final class AppleCalendarService: CalendarProviderService {
         }
     }
 
-    private func requireFullAccess() throws {
+    func requireFullAccess() throws {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else {
             throw AppleCalendarError.permissionDenied
         }

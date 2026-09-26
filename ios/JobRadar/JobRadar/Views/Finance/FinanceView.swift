@@ -24,23 +24,20 @@ struct FinanceView: View {
         NavigationStack(path: $app.financePath) {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                    OrbitPageHeading(
+                        title: "Finance",
+                        subtitle: "Your money, in perspective.",
+                        actionTitle: finance.isConnected ? "Connect another financial institution" : nil,
+                        action: finance.isConnected ? beginConnection : nil
+                    )
                     content
                 }
-                .padding(AppTheme.Spacing.lg)
+                .padding(.horizontal, AppTheme.Spacing.page)
+                .padding(.top, AppTheme.Spacing.lg)
+                .padding(.bottom, AppTheme.Spacing.xxl)
             }
             .background(AppTheme.background)
-            .navigationTitle("Finance")
-            .toolbar {
-                if finance.isConnected {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: beginConnection) {
-                            Image(systemName: "plus")
-                        }
-                        .disabled(isPreparingLink || finance.isConnecting)
-                        .accessibilityLabel("Connect another financial institution")
-                    }
-                }
-            }
+            .orbitNavigationChrome()
             .refreshable {
                 if finance.hasPendingHostedLink { await finance.resumeHostedLinkIfNeeded() }
                 else { await finance.load(showLoading: false, forceRefresh: true) }
@@ -169,11 +166,15 @@ struct FinanceView: View {
             overview: overview,
             period: spendingPeriod
         )
-        return VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+        // On a wide iPad: where the money stands on the left, where it went on
+        // the right.
+        return OrbitColumns {
             refreshStatus
-            financialPositionCard(overview)
-            summaryGrid(overview)
-            cashFlowCard(overview)
+            financialPositionCard(overview).orbitColumn(.leading)
+            summaryGrid(overview).orbitColumn(.leading)
+            cashFlowCard(overview).orbitColumn(.leading)
+            financeDestinations(overview).orbitColumn(.leading)
+            spendingSection(overview, analysis: spending).orbitColumn(.trailing)
             FinanceSmartInsightCard(
                 overview: overview,
                 spending: spending,
@@ -183,14 +184,57 @@ struct FinanceView: View {
                 automaticOrganizationEnabled: autoOrganizeWithAI,
                 isAIAvailable: app.connections.aiConnected
             )
-            spendingSection(overview, analysis: spending)
-            recurringPaymentsSection(overview)
-            incomeDestination
-            transactionsSection(overview)
-            accountsSection(overview)
-            institutionsSection(overview)
+            .orbitColumn(.trailing)
+            recurringPaymentsSection(overview).orbitColumn(.leading)
+            transactionsSection(overview).orbitColumn(.trailing)
+            accountsSection(overview).orbitColumn(.leading)
+            institutionsSection(overview).orbitColumn(.leading)
             privacyCard
         }
+    }
+
+    private func financeDestinations(_ overview: FinanceOverview) -> some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            financeDestination(
+                title: "Income",
+                symbol: "building.columns",
+                accessibilityHint: "Shows confirmed earnings separately from all account inflows"
+            ) { app.financePath.append(.income) }
+            financeDestination(title: "Recurring", symbol: "repeat") {
+                app.financePath.append(.recurring)
+            }
+            financeDestination(title: "Transactions", symbol: "creditcard") {
+                app.financePath.append(.transactions)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Finance details")
+    }
+
+    private func financeDestination(
+        title: String,
+        symbol: String,
+        accessibilityHint: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: AppTheme.Spacing.sm) {
+                Image(systemName: symbol)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(AppTheme.secondaryText)
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .background(AppTheme.primarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+            .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.md).strokeBorder(AppTheme.separator, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(accessibilityHint ?? "Opens \(title)")
     }
 
     @ViewBuilder
@@ -744,7 +788,7 @@ private struct FinancePositionCard: View {
         .padding(AppTheme.Spacing.xl)
         .background(
             LinearGradient(
-                colors: [AppTheme.elevatedSurface, AppTheme.primarySurface],
+                colors: [Color(hex: 0x1B1417), AppTheme.primarySurface],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
@@ -752,13 +796,7 @@ private struct FinancePositionCard: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-                .strokeBorder(AppTheme.border, lineWidth: 1)
-        }
-        .overlay(alignment: .topLeading) {
-            Capsule()
-                .fill(AppTheme.brandGradient)
-                .frame(width: 64, height: 3)
-                .padding(.leading, AppTheme.Spacing.xl)
+                .strokeBorder(AppTheme.coral.opacity(0.18), lineWidth: 1)
         }
         .shadow(
             color: AppTheme.Shadow.cardColor,
@@ -1596,7 +1634,7 @@ private struct FinanceTransactionsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+            OrbitColumns {
                 if transactions.isEmpty {
                     Text("No transactions are available yet. Plaid may still be preparing the first sync.")
                         .font(.subheadline)
@@ -1605,8 +1643,8 @@ private struct FinanceTransactionsView: View {
                         .cardSurface()
                 } else {
                     controls
-                    summary
-                    merchantSection
+                    summary.orbitColumn(.leading)
+                    merchantSection.orbitColumn(.trailing)
 
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
                         SectionHeader(title: filter.sectionTitle)

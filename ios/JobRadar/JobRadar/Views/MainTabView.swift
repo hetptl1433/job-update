@@ -1,12 +1,55 @@
 import SwiftUI
 
 /// Four primary destinations plus a persistent, visually distinct Orbit
-/// launcher. Less frequent tools remain available from the More hub.
+/// launcher. Less frequent tools remain available from the More hub. On an
+/// iPad with room for it, a sidebar lists every destination instead.
 struct MainTabView: View {
     @EnvironmentObject private var app: AppState
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var presentedMoreSheet: MoreSheet?
+    /// Automations or Settings, when the iPad sidebar shows one beside it.
+    @State private var sidebarPage: MoreSheet?
+
+    /// Narrow iPad windows, such as Slide Over, keep the iPhone dock.
+    private var usesSidebar: Bool {
+        DeviceProfile.isPad && horizontalSizeClass == .regular
+    }
 
     var body: some View {
+        Group {
+            if usesSidebar {
+                OrbitSidebarLayout(
+                    page: $sidebarPage,
+                    onVoice: { app.assistantLaunch = .voice },
+                    onOpenMoreDestination: openMoreDestination
+                )
+            } else {
+                dockLayout
+            }
+        }
+        .sheet(isPresented: chatPresented) {
+            NavigationStack {
+                AssistantView(initialPrompt: app.assistantInitialPrompt ?? "")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { app.closeChat() }
+                        }
+                    }
+            }
+            .presentationDragIndicator(.visible)
+            .presentationBackground(AppTheme.background)
+        }
+        .sheet(item: $presentedMoreSheet) { sheet in
+            MoreSheetContent(sheet: sheet)
+                .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(isPresented: voicePresented) {
+            LiveVoiceView()
+        }
+        .focusedSceneValue(\.orbitNavigator, navigator)
+    }
+
+    private var dockLayout: some View {
         TabView(selection: primarySelection) {
             HomeView()
                 .tag(AppState.Tab.home)
@@ -26,27 +69,6 @@ struct MainTabView: View {
                 onOpenMoreDestination: openMoreDestination
             )
         }
-        .sheet(isPresented: chatPresented) {
-            NavigationStack {
-                AssistantView(initialPrompt: app.assistantInitialPrompt ?? "")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") {
-                                app.assistantLaunch = nil
-                                app.assistantInitialPrompt = nil
-                            }
-                        }
-                    }
-            }
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(item: $presentedMoreSheet) { sheet in
-            MoreSheetContent(sheet: sheet)
-                .presentationDragIndicator(.visible)
-        }
-        .fullScreenCover(isPresented: voicePresented) {
-            LiveVoiceView()
-        }
     }
 
     /// Secondary destinations share the More tab visually while retaining
@@ -63,14 +85,12 @@ struct MainTabView: View {
         )
     }
 
+    /// Beside the iPad sidebar, Chat fills the screen instead of a sheet.
     private var chatPresented: Binding<Bool> {
         Binding(
-            get: { app.assistantLaunch == .chat },
+            get: { !usesSidebar && app.assistantLaunch == .chat },
             set: { presented in
-                if !presented, app.assistantLaunch == .chat {
-                    app.assistantLaunch = nil
-                    app.assistantInitialPrompt = nil
-                }
+                if !presented { app.closeChat() }
             }
         )
     }
@@ -86,6 +106,27 @@ struct MainTabView: View {
         )
     }
 
+    private var navigator: OrbitNavigator {
+        OrbitNavigator(
+            show: show,
+            openChat: {
+                presentedMoreSheet = nil
+                sidebarPage = nil
+                app.openAssistant()
+            },
+            startVoice: { app.assistantLaunch = .voice },
+            newTask: { app.quickTaskCaptureRequested = true },
+            openSettings: { openMoreDestination(.settings) }
+        )
+    }
+
+    private func show(_ tab: AppState.Tab) {
+        app.closeChat()
+        presentedMoreSheet = nil
+        sidebarPage = nil
+        withAnimation(.easeOut(duration: 0.18)) { app.selectedTab = tab }
+    }
+
     private func openMoreDestination(_ destination: MoreDestination) {
         switch destination {
         case .tasks:
@@ -95,13 +136,193 @@ struct MainTabView: View {
         case .inbox:
             withAnimation(.easeOut(duration: 0.18)) { app.selectedTab = .inbox }
         case .automations:
-            app.selectedTab = .more
-            presentedMoreSheet = .automations
+            openPage(.automations)
         case .settings:
-            app.selectedTab = .more
-            presentedMoreSheet = .settings
+            openPage(.settings)
         }
     }
+
+    private func openPage(_ page: MoreSheet) {
+        if usesSidebar {
+            app.closeChat()
+            sidebarPage = page
+        } else {
+            app.selectedTab = .more
+            presentedMoreSheet = page
+        }
+    }
+}
+
+private extension AppState {
+    func closeChat() {
+        guard assistantLaunch == .chat else { return }
+        assistantLaunch = nil
+        assistantInitialPrompt = nil
+    }
+}
+
+/// iPad layout: every destination in a sidebar, with Orbit Chat and live voice
+/// at the top, and the selected one filling the rest of the screen. Each
+/// screen keeps its own navigation stack, as it does behind the iPhone dock.
+private struct OrbitSidebarLayout: View {
+    @EnvironmentObject private var app: AppState
+    @Binding var page: MoreSheet?
+    let onVoice: () -> Void
+    let onOpenMoreDestination: (MoreDestination) -> Void
+
+    /// From this width, screens get wider margins, show more items, and lay
+    /// their sections out in two columns.
+    private static let wideWidth: CGFloat = 800
+    /// Added to each screen's own side margin once it's wide.
+    private static let wideMargin: CGFloat = 12
+    /// Wider than this, such as on an external display, content stays centered.
+    private static let maxContentWidth: CGFloat = 1600
+
+    var body: some View {
+        NavigationSplitView {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 340)
+        } detail: {
+            GeometryReader { proxy in
+                let isWide = proxy.size.width >= Self.wideWidth
+                detail
+                    .safeAreaPadding(
+                        .horizontal,
+                        max(isWide ? Self.wideMargin : 0, (proxy.size.width - Self.maxContentWidth) / 2)
+                    )
+                    .environment(\.orbitWideLayout, isWide)
+                    .environment(\.orbitOpenSettings, openSettings)
+            }
+            .background(AppTheme.background.ignoresSafeArea())
+        }
+        .onChange(of: DetailRoute(tab: app.selectedTab, showsChat: app.assistantLaunch == .chat)) { old, new in
+            // A deep link, widget or shortcut that opens another screen
+            // replaces Chat or a page showing beside the sidebar.
+            guard old.tab != new.tab else { return }
+            page = nil
+            if old.showsChat, new.showsChat { app.closeChat() }
+        }
+    }
+
+    private var sidebar: some View {
+        List(selection: selection) {
+            Section {
+                Label {
+                    Text("Orbit Chat").foregroundStyle(AppTheme.primaryText)
+                } icon: {
+                    OrbitMark(size: 24)
+                }
+                .tag(SidebarItem.chat)
+                Button(action: onVoice) {
+                    Label {
+                        Text("Live voice").foregroundStyle(AppTheme.primaryText)
+                    } icon: {
+                        Image(systemName: "waveform").foregroundStyle(AppTheme.coral)
+                    }
+                }
+            }
+
+            Section {
+                row(.tab(.home), title: "Home", symbol: "house")
+                row(.tab(.finance), title: "Finance", symbol: "creditcard")
+                row(.tab(.health), title: "Health", symbol: "heart")
+            }
+
+            Section("Workspace") {
+                row(.tab(.tasks), title: "To Do", symbol: "checklist")
+                row(.tab(.jobs), title: "Jobs", symbol: "briefcase")
+                row(.tab(.inbox), title: "Inbox", symbol: "tray")
+            }
+
+            Section {
+                row(.page(.automations), title: "Automations", symbol: "bolt")
+                row(.page(.settings), title: "Settings", symbol: "gearshape")
+            }
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.primarySurface)
+        .environment(\.colorScheme, .dark)
+        .navigationTitle("Orbit")
+        .toolbarBackground(AppTheme.primarySurface, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if app.assistantLaunch == .chat {
+            NavigationStack {
+                AssistantView(initialPrompt: app.assistantInitialPrompt ?? "")
+            }
+            // Opening Chat with a new prompt, such as from Health, starts from it.
+            .id(app.assistantInitialPrompt ?? "")
+        } else if let page {
+            switch page {
+            case .automations: AutomationsView()
+            case .settings: SettingsView(showsDoneButton: false)
+            }
+        } else {
+            switch app.selectedTab {
+            case .home: HomeView()
+            case .finance: FinanceView()
+            case .health: HealthView()
+            case .tasks: TasksView()
+            case .jobs: JobsView()
+            case .inbox: InboxView()
+            case .more: OrbitMoreView(onOpenMoreDestination: onOpenMoreDestination)
+            }
+        }
+    }
+
+    /// `.more` has no row: its destinations are all listed here, so the
+    /// sidebar highlights nothing while the More screen is showing.
+    private var selection: Binding<SidebarItem?> {
+        Binding(
+            get: {
+                if app.assistantLaunch == .chat { return .chat }
+                if let page { return .page(page) }
+                return app.selectedTab == .more ? nil : .tab(app.selectedTab)
+            },
+            set: { item in
+                switch item {
+                case .chat:
+                    page = nil
+                    if app.assistantLaunch != .chat { app.openAssistant() }
+                case .tab(let tab):
+                    app.closeChat()
+                    page = nil
+                    app.selectedTab = tab
+                case .page(let newPage):
+                    app.closeChat()
+                    page = newPage
+                case nil:
+                    break
+                }
+            }
+        )
+    }
+
+    private func openSettings() {
+        app.closeChat()
+        page = .settings
+    }
+
+    private func row(_ item: SidebarItem, title: String, symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .tag(item)
+    }
+}
+
+private enum SidebarItem: Hashable {
+    case chat
+    case tab(AppState.Tab)
+    case page(MoreSheet)
+}
+
+private struct DetailRoute: Equatable {
+    var tab: AppState.Tab
+    var showsChat: Bool
 }
 
 private struct MoreTabHost: View {
@@ -129,11 +350,17 @@ struct OrbitControlBar: View {
     let onVoice: () -> Void
     let onOpenMoreDestination: (MoreDestination) -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Only taps on the dock tick, not programmatic tab changes like deep links.
+    @State private var tabFeedback = 0
+    @State private var voiceFeedback = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Lets the selection indicator slide between dock items.
+    @Namespace private var indicatorNamespace
 
     var body: some View {
         GeometryReader { proxy in
             let slotWidth = proxy.size.width / 5
-            let assistantDiameter = min(48, max(40, slotWidth - 24))
+            let assistantDiameter = min(46, max(40, slotWidth - 24))
 
             HStack(alignment: .center, spacing: 0) {
                 destination(.home, title: "Home", symbol: "house", selectedSymbol: "house.fill")
@@ -142,22 +369,22 @@ struct OrbitControlBar: View {
                 VStack(spacing: 3) {
                     ZStack {
                         Circle()
-                            .fill(AppTheme.brand.opacity(0.18))
+                            .fill(AppTheme.brand.opacity(0.08))
                             .frame(width: assistantDiameter + 7, height: assistantDiameter + 7)
-                            .blur(radius: 7)
+                            .blur(radius: 5)
                         Circle()
                             .fill(AppTheme.brandGradient)
                             .frame(width: assistantDiameter, height: assistantDiameter)
                             .overlay(Circle().strokeBorder(.white.opacity(0.34), lineWidth: 1))
-                            .shadow(color: AppTheme.brand.opacity(0.38), radius: 9, y: 4)
-                        Image(systemName: "message.fill")
+                            .shadow(color: AppTheme.brand.opacity(0.2), radius: 7, y: 3)
+                        Image(systemName: "waveform")
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(.white)
                     }
                     if !dynamicTypeSize.isAccessibilitySize {
                         Text("Orbit")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(AppTheme.brand)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(AppTheme.coral)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }
@@ -188,6 +415,8 @@ struct OrbitControlBar: View {
                 .fill(AppTheme.border.opacity(0.75))
                 .frame(height: 0.5)
         }
+        .sensoryFeedback(.selection, trigger: tabFeedback)
+        .sensoryFeedback(.impact(weight: .medium), trigger: voiceFeedback)
     }
 
     private func destination(
@@ -253,22 +482,34 @@ struct OrbitControlBar: View {
         let isSelected = isDockSelected(tab)
         return VStack(spacing: dynamicTypeSize.isAccessibilitySize ? 0 : 4) {
             Image(systemName: isSelected ? selectedSymbol : symbol)
-                .font(.system(size: 17, weight: isSelected ? .semibold : .regular))
+                .font(.system(size: 20, weight: isSelected ? .semibold : .regular))
                 .symbolRenderingMode(.monochrome)
+                .contentTransition(.symbolEffect(.replace.downUp))
+                .scaleEffect(isSelected && !reduceMotion ? 1.06 : 1)
             if !dynamicTypeSize.isAccessibilitySize {
                 Text(title)
-                    .font(.system(size: 9, weight: isSelected ? .semibold : .medium))
+                    .font(.caption2.weight(isSelected ? .semibold : .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }
         }
-        .foregroundStyle(isSelected ? AppTheme.brand : AppTheme.tertiaryText)
+        .foregroundStyle(isSelected ? AppTheme.coral : AppTheme.tertiaryText)
         .frame(maxWidth: .infinity, minHeight: 47)
         .contentShape(Rectangle())
+        .overlay(alignment: .top) {
+            if isSelected {
+                Capsule()
+                    .fill(AppTheme.accent)
+                    .frame(width: 18, height: 2)
+                    .matchedGeometryEffect(id: "dock-indicator", in: indicatorNamespace)
+                    .offset(y: -8)
+            }
+        }
     }
 
     private func select(_ tab: AppState.Tab) {
-        withAnimation(.easeOut(duration: 0.18)) {
+        if !isDockSelected(tab) { tabFeedback += 1 }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.78)) {
             selection = tab
         }
     }
@@ -279,7 +520,10 @@ struct OrbitControlBar: View {
             .onEnded { result in
                 switch result {
                 case .first(let didHold):
-                    if didHold { onVoice() }
+                    if didHold {
+                        voiceFeedback += 1
+                        onVoice()
+                    }
                 case .second:
                     onChat()
                 }
@@ -298,8 +542,10 @@ struct OrbitControlBar: View {
 /// Direct destinations continue to use AppState tabs so deep links and Home
 /// shortcuts preserve their existing behavior.
 struct OrbitMoreView: View {
+    @EnvironmentObject private var app: AppState
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.orbitWideLayout) private var isWide
     let onOpenMoreDestination: (MoreDestination) -> Void
     @State private var hasAppeared = false
 
@@ -307,20 +553,21 @@ struct OrbitMoreView: View {
         if dynamicTypeSize.isAccessibilitySize {
             return [GridItem(.flexible())]
         }
-        return [
-            GridItem(.flexible(), spacing: AppTheme.Spacing.md),
-            GridItem(.flexible(), spacing: AppTheme.Spacing.md)
-        ]
+        return Array(
+            repeating: GridItem(.flexible(), spacing: AppTheme.Spacing.md),
+            count: isWide ? 4 : 2
+        )
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                    OrbitPageHeading(title: "More", subtitle: "Everything else, close by.")
                     intro
 
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                        Text("Workspace").sectionLabel()
+                        SectionHeader(title: "Your workspace")
 
                         LazyVGrid(columns: columns, spacing: AppTheme.Spacing.md) {
                             tabCard(
@@ -351,19 +598,18 @@ struct OrbitMoreView: View {
                     }
 
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                        Text("Account").sectionLabel()
+                        SectionHeader(title: "Account")
                         settingsRow
                     }
                 }
-                .padding(.horizontal, AppTheme.Spacing.lg)
-                .padding(.top, AppTheme.Spacing.sm)
+                .padding(.horizontal, AppTheme.Spacing.page)
+                .padding(.top, AppTheme.Spacing.lg)
                 .padding(.bottom, AppTheme.Spacing.xxl)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 10)
             }
             .background(AppTheme.background)
-            .navigationTitle("More")
-            .navigationBarTitleDisplayMode(.large)
+            .orbitNavigationChrome()
             .onAppear {
                 if reduceMotion {
                     hasAppeared = true
@@ -377,27 +623,20 @@ struct OrbitMoreView: View {
     }
 
     private var intro: some View {
-        HStack(alignment: .center, spacing: AppTheme.Spacing.lg) {
-            ZStack {
-                Circle()
-                    .fill(AppTheme.brand.opacity(0.12))
-                    .frame(width: 58, height: 58)
-                Circle()
-                    .strokeBorder(AppTheme.brand.opacity(0.36), lineWidth: 1)
-                    .frame(width: 58, height: 58)
-                Image(systemName: "waveform")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(AppTheme.brand)
-            }
-
+        HStack(alignment: .center, spacing: AppTheme.Spacing.md) {
+            OrbitAvatar(name: app.user?.fullName ?? "Orbit", size: 48)
             VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                Text("Everything else, close by")
+                Text(app.user?.fullName ?? "Your workspace")
                     .font(.headline)
                     .foregroundStyle(AppTheme.primaryText)
-                Text("Your work tools, automations, and account settings live here.")
-                    .font(.subheadline)
+                Text("A little more connected.")
+                    .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            OrbitIconButton(title: "Account settings", symbol: "gearshape") {
+                onOpenMoreDestination(.settings)
             }
         }
         .cardSurface()
@@ -551,13 +790,8 @@ private struct MoreDestinationLabel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
-        .padding(AppTheme.Spacing.md)
-        .background(AppTheme.primarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                .strokeBorder(AppTheme.border, lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
+        .cardSurface(padding: AppTheme.Spacing.lg)
     }
 }
 

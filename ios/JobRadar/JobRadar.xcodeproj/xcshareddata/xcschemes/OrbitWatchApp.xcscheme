@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "2660"
+   LastUpgradeVersion = "1430"
    version = "1.3">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -55,7 +55,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "62DF076E9D8E8CD291E700E9"
             BuildableName = "OrbitWatchApp.app"
-            BlueprintName = "OrbitWatchApp"
             ReferencedContainer = "container:JobRadar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -72,7 +71,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "62DF076E9D8E8CD291E700E9"
             BuildableName = "OrbitWatchApp.app"
-            BlueprintName = "OrbitWatchApp"
             ReferencedContainer = "container:JobRadar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

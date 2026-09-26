@@ -14,9 +14,21 @@ final class JobRepository: ObservableObject {
     private let api: APIClient
     private let context: ModelContext
 
+    private static let automaticRefreshInterval: TimeInterval = 120
+
     init(api: APIClient, context: ModelContext) {
         self.api = api
         self.context = context
+    }
+
+    /// Home and Jobs refresh when they appear. Switching tabs reuses a sync
+    /// from the last couple of minutes; pull to refresh always syncs.
+    @discardableResult
+    func refreshIfStale() async -> Bool {
+        if let lastSync, Date.now.timeIntervalSince(lastSync) < Self.automaticRefreshInterval {
+            return true
+        }
+        return await refresh()
     }
 
     @discardableResult
@@ -57,8 +69,11 @@ final class JobRepository: ObservableObject {
     }
 
     func delete(_ application: JobApplication) {
+        let applicationID = application.id
         context.delete(application)
-        _ = saveLocal()
+        if saveLocal() {
+            NotificationManager.shared.cancelJobReminder(applicationID: applicationID)
+        }
     }
 
     /// Apply an AI-detected update: update the matching company or create a new

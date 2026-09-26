@@ -17,6 +17,20 @@ packages:
   MSAL:
     url: https://github.com/AzureAD/microsoft-authentication-library-for-objc
     from: "2.14.1"
+  # On-device Orbit Chat: MLX runs the model; Hugging Face packages download
+  # the pinned weights and provide the tokenizer.
+  MLXSwift:
+    url: https://github.com/ml-explore/mlx-swift
+    from: "0.31.4"
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    from: "3.31.4"
+  SwiftHuggingFace:
+    url: https://github.com/huggingface/swift-huggingface
+    from: "0.11.0"
+  SwiftTransformers:
+    url: https://github.com/huggingface/swift-transformers
+    from: "1.3.4"
 targets:
   JobRadar:
     type: application
@@ -29,7 +43,19 @@ targets:
         product: GoogleSignIn
       - package: MSAL
         product: MSAL
+      - package: MLXSwift
+        product: MLX
+      - package: MLXSwiftLM
+        product: MLXLLM
+      - package: MLXSwiftLM
+        product: MLXLMCommon
+      - package: SwiftHuggingFace
+        product: HuggingFace
+      - package: SwiftTransformers
+        product: Tokenizers
       - target: OrbitTasksWidget
+        embed: true
+      - target: OrbitScreenBroadcast
         embed: true
       - target: OrbitWatchApp
         embed: true
@@ -58,21 +84,47 @@ targets:
           - msauthv3
         NSCalendarsFullAccessUsageDescription: Orbit reads your calendars and creates or updates only Apple Calendar events linked to your timed Orbit To Dos.
         NSAlarmKitUsageDescription: Orbit schedules prominent alarms for timed To Dos when you choose Alarm.
-        NSHealthShareUsageDescription: Orbit shows your sleep, steps, workouts and heart data in your daily summary. This information stays on your device unless you choose to share it.
+        NSHealthShareUsageDescription: Orbit shows your activity, sleep, workouts, heart, mobility, body measurements, and mindfulness data in private summaries. This information stays on your device unless you choose to share it.
+        NSLocalNetworkUsageDescription: Orbit uses a private local connection to play your approved screen broadcast on your CarPlay display.
+        NSBonjourServices:
+          - _orbitmirror._tcp
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         NSMicrophoneUsageDescription: Orbit uses the microphone only while you use voice mode to ask your assistant a question.
         NSSpeechRecognitionUsageDescription: Orbit transcribes what you say in voice mode so your assistant can answer using your Orbit data.
-        UIRequiredDeviceCapabilities:
-          - healthkit
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UILaunchScreen: {}
         UIBackgroundModes:
+          - audio
           - fetch
           - remote-notification
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneClassName: CPTemplateApplicationScene
+                UISceneConfigurationName: OrbitCarPlaySceneConfiguration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).OrbitCarPlaySceneDelegate
+        # iPad has no CarPlay, and every Orbit window would share one app
+        # state, so a second iPad window would mirror the first. One window.
+        UIApplicationSceneManifest~ipad:
+          UIApplicationSupportsMultipleScenes: false
         BGTaskSchedulerPermittedIdentifiers:
           - com.hetpatel.jobradar.refresh
     entitlements:
       path: JobRadar/Resources/JobRadar.entitlements
       properties:
         com.apple.developer.healthkit: true
+        # Lets larger on-device models load on iPads and 8 GB iPhones. Not a
+        # managed capability: automatic signing adds it to the App ID.
+        com.apple.developer.kernel.increased-memory-limit: true
+        # Add com.apple.developer.carplay-video: true only
+        # after Apple grants that managed capability to this App ID. Adding an
+        # unapproved restricted entitlement breaks physical-device signing.
         com.apple.security.application-groups:
           - group.com.hetpatel.jobradar
         keychain-access-groups:
@@ -86,7 +138,37 @@ targets:
         PRODUCT_MODULE_NAME: JobRadar
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: VN6463GX9K
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+  OrbitScreenBroadcast:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: OrbitScreenBroadcast
+      - path: Shared/OrbitMirrorShared.swift
+    info:
+      path: OrbitScreenBroadcast/Info.plist
+      properties:
+        CFBundleDisplayName: Orbit Screen Broadcast
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+    entitlements:
+      path: OrbitScreenBroadcast/OrbitScreenBroadcast.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.hetpatel.jobradar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hetpatel.jobradar.screen-broadcast
+        PRODUCT_NAME: OrbitScreenBroadcast
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: VN6463GX9K
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
   OrbitTasksWidget:
     type: app-extension
     platform: iOS
@@ -114,7 +196,7 @@ targets:
         DEVELOPMENT_TEAM: VN6463GX9K
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
   OrbitWatchApp:
     type: application
     platform: watchOS
@@ -156,7 +238,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hetpatel.jobradar.tests
         GENERATE_INFOPLIST_FILE: YES
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Orbit.app/Orbit"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
@@ -164,6 +246,7 @@ schemes:
     build:
       targets:
         JobRadar: all
+        OrbitScreenBroadcast: all
         OrbitTasksWidget: all
         OrbitWatchApp: all
     run:

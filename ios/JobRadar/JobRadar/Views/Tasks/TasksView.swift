@@ -18,6 +18,9 @@ struct TasksView: View {
     @State private var successFeedback = 0
     @State private var selectionFeedback = 0
     @State private var deletionFeedback = 0
+    @State private var priorityFeedback = 0
+    /// A date phrase the user removed from the current quick capture.
+    @State private var dismissedCaptureDatePhrase: String?
     @FocusState private var quickCaptureFocused: Bool
 
     private enum TodoUndoAction {
@@ -34,6 +37,14 @@ struct TasksView: View {
 
     private enum QuickSchedule: Equatable {
         case today, tomorrow, nextWeek, anytime
+    }
+
+    /// A due date typed into quick capture, unless the user removed it.
+    private var captureDate: QuickCaptureDate? {
+        let text = quickCaptureTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let detected = QuickCaptureDate.detect(in: text),
+              detected.phrase != dismissedCaptureDatePhrase else { return nil }
+        return detected
     }
 
     private var open: [TaskItem] {
@@ -67,6 +78,23 @@ struct TasksView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    OrbitPageHeading(
+                        title: "To do",
+                        subtitle: "Make room for what matters.",
+                        actionTitle: "Create To Do with details",
+                        action: { editing = TaskItem(title: "") }
+                    )
+                    .padding(.top, AppTheme.Spacing.sm)
+                    .listRowInsets(EdgeInsets(
+                        top: AppTheme.Spacing.sm,
+                        leading: AppTheme.Spacing.page,
+                        bottom: 0,
+                        trailing: AppTheme.Spacing.page
+                    ))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
                 Section { quickCapture }
 
                 if let error = tasks.calendarSyncError {
@@ -133,16 +161,9 @@ struct TasksView: View {
             .scrollContentBackground(.hidden)
             .background(AppTheme.background.ignoresSafeArea())
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("To Do")
+            .orbitNavigationChrome()
             .searchable(text: $searchText, prompt: "Search To Do")
             .refreshable { await app.refreshTasks() }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { editing = TaskItem(title: "") } label: { Image(systemName: "plus") }
-                        .tint(AppTheme.primaryText)
-                        .accessibilityLabel("Create To Do with details")
-                }
-            }
             .sheet(item: $editing) { item in
                 TaskEditor(item: item) { saved in
                     if tasks.tasks.contains(where: { $0.id == saved.id }) { tasks.update(saved) }
@@ -189,6 +210,7 @@ struct TasksView: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: undoAction != nil)
             .sensoryFeedback(.success, trigger: successFeedback)
             .sensoryFeedback(.selection, trigger: selectionFeedback)
+            .sensoryFeedback(.selection, trigger: priorityFeedback)
             .sensoryFeedback(
                 .impact(weight: .light, intensity: 0.65),
                 trigger: deletionFeedback
@@ -218,8 +240,17 @@ struct TasksView: View {
                     HStack(spacing: AppTheme.Spacing.sm) { quickCaptureField; quickCaptureButton }
                 }
             }
+
+            if let captureDate {
+                QuickCaptureDateChip(detected: captureDate) {
+                    withAnimation(reduceMotion ? nil : .snappy) {
+                        dismissedCaptureDatePhrase = captureDate.phrase
+                    }
+                }
+            }
         }
-        .cardSurface(padding: AppTheme.Spacing.lg, radius: AppTheme.Radius.lg)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: captureDate?.phrase)
+        .orbitFocusSurface(padding: AppTheme.Spacing.lg)
         .listRowInsets(EdgeInsets(
             top: AppTheme.Spacing.md,
             leading: AppTheme.Spacing.lg,
@@ -262,7 +293,7 @@ struct TasksView: View {
         .disabled(quickCaptureTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         .opacity(quickCaptureTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
         .accessibilityLabel("Add To Do")
-        .accessibilityHint("Adds this item without a due date")
+        .accessibilityHint(captureDate.map { "Adds this item due \($0.label)" } ?? "Adds this item without a due date")
     }
 
     @ViewBuilder
@@ -297,7 +328,12 @@ struct TasksView: View {
                     ))
                     .listRowBackground(AppTheme.primarySurface)
                     .listRowSeparatorTint(AppTheme.separator)
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    // A full swipe right completes, like Reminders.
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button { complete(item) } label: {
+                            Label("Done", systemImage: "checkmark")
+                        }
+                        .tint(AppTheme.success)
                         Button { schedulingTask = item } label: {
                             Label("Schedule", systemImage: "calendar.badge.clock")
                         }
@@ -312,6 +348,7 @@ struct TasksView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
+                    .contextMenu { taskActions(item) }
                     .accessibilityAction(named: "Schedule") { schedulingTask = item }
                     .accessibilityAction(named: "Edit") { editing = item }
                     .accessibilityAction(named: "Delete") { deleteWithUndo(item) }
@@ -327,6 +364,49 @@ struct TasksView: View {
                 .textCase(nil)
             }
         }
+    }
+
+    @ViewBuilder
+    private func taskActions(_ item: TaskItem) -> some View {
+        Button { complete(item) } label: {
+            Label("Complete", systemImage: "checkmark.circle")
+        }
+        Button { editing = item } label: {
+            Label("Edit", systemImage: "pencil")
+        }
+        Picker(selection: Binding(get: { item.priority }, set: { setPriority($0, for: item) })) {
+            ForEach(TaskPriority.allCases.reversed()) { priority in
+                Label(priority.label, systemImage: priority == .high ? "exclamationmark" : priority == .low ? "arrow.down" : "minus")
+                    .tag(priority)
+            }
+        } label: {
+            Label("Priority", systemImage: "flag")
+        }
+        .pickerStyle(.menu)
+        Menu {
+            Button { schedule(item, as: .today) } label: { Label("Today", systemImage: "sun.max") }
+            Button { schedule(item, as: .tomorrow) } label: { Label("Tomorrow", systemImage: "sunrise") }
+            Button { schedule(item, as: .nextWeek) } label: { Label("Next Monday", systemImage: "calendar") }
+            Button { editing = item } label: { Label("Pick date & time…", systemImage: "calendar.badge.clock") }
+            if item.dueDate != nil {
+                Button { schedule(item, as: .anytime) } label: { Label("No due date", systemImage: "calendar.badge.minus") }
+            }
+        } label: {
+            Label("Schedule", systemImage: "calendar")
+        }
+        Divider()
+        Button(role: .destructive) { deleteWithUndo(item) } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func setPriority(_ priority: TaskPriority, for item: TaskItem) {
+        guard var current = tasks.tasks.first(where: { $0.id == item.id }), current.priority != priority else { return }
+        current.priority = priority
+        let didUpdate = withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            tasks.update(current)
+        }
+        if didUpdate { priorityFeedback += 1 }
     }
 
     private var suggestionsSection: some View {
@@ -429,10 +509,12 @@ struct TasksView: View {
     private func addQuickCapture() {
         let title = quickCaptureTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        guard tasks.add(TaskItem(title: title)) else { return }
+        let item = captureDate.map { TaskItem(title: $0.title, dueDate: $0.dueDate) } ?? TaskItem(title: title)
+        guard tasks.add(item) else { return }
         successFeedback += 1
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
             quickCaptureTitle = ""
+            dismissedCaptureDatePhrase = nil
         }
         quickCaptureFocused = true
     }
@@ -931,10 +1013,17 @@ struct QuickTaskCaptureView: View {
     @State private var saveError: String?
     @State private var successFeedback = 0
     @State private var isSaving = false
+    @State private var dismissedDatePhrase: String?
     @FocusState private var titleFocused: Bool
 
     private var trimmedTitle: String {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A date typed into the title, unless the user removed it.
+    private var detectedDate: QuickCaptureDate? {
+        guard let detected = QuickCaptureDate.detect(in: trimmedTitle), detected.phrase != dismissedDatePhrase else { return nil }
+        return detected
     }
 
     var body: some View {
@@ -972,8 +1061,12 @@ struct QuickTaskCaptureView: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(AppTheme.destructive)
                     .accessibilityLabel("Error. \(saveError)")
+            } else if let detectedDate {
+                QuickCaptureDateChip(detected: detectedDate) {
+                    dismissedDatePhrase = detectedDate.phrase
+                }
             } else {
-                Text("Saved instantly without a due date. You can add details later.")
+                Text("Add a time like “tomorrow 3pm” to schedule it, or add details later.")
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -987,12 +1080,14 @@ struct QuickTaskCaptureView: View {
             .opacity(trimmedTitle.isEmpty || isSaving ? 0.45 : 1)
             .accessibilityHint("Saves this item and closes Quick Add")
         }
+        .animation(.snappy(duration: 0.25), value: detectedDate?.phrase)
         .padding(.horizontal, AppTheme.Spacing.xl)
         .padding(.top, AppTheme.Spacing.xl)
         .padding(.bottom, AppTheme.Spacing.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(AppTheme.background.ignoresSafeArea())
         .presentationDetents([dynamicTypeSize.isAccessibilitySize ? .large : .height(330)])
+        .orbitFittedSheet()
         .presentationBackground(AppTheme.background)
         .presentationDragIndicator(.hidden)
         .presentationCornerRadius(30)
@@ -1042,12 +1137,114 @@ struct QuickTaskCaptureView: View {
     private func save() {
         guard !trimmedTitle.isEmpty, !isSaving else { return }
         isSaving = true
-        guard tasks.add(TaskItem(title: trimmedTitle)) else {
+        let item = detectedDate.map { TaskItem(title: $0.title, dueDate: $0.dueDate) } ?? TaskItem(title: trimmedTitle)
+        guard tasks.add(item) else {
             isSaving = false
             saveError = "Couldn’t save this To Do. Please try again."
             return
         }
         successFeedback += 1
         dismiss()
+    }
+}
+
+// MARK: - Dates in quick capture
+
+/// A due date written into a quick-capture title, such as "Call Sam tomorrow
+/// at 3pm". The date phrase is taken out of the title.
+struct QuickCaptureDate: Equatable {
+    var title: String
+    var dueDate: Date
+    /// The words that were read as the date, e.g. "tomorrow at 3pm".
+    var phrase: String
+
+    /// Built once; it runs on every keystroke in quick capture.
+    private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue)
+
+    static func detect(in text: String, now: Date = .now, calendar: Calendar = .current) -> QuickCaptureDate? {
+        guard let detector,
+              let match = detector.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              var date = match.date,
+              let range = Range(match.range, in: text) else { return nil }
+        let phrase = String(text[range])
+
+        // A date without a time comes back at noon. Today means by 5 PM (or an
+        // hour from now once that's passed); any other day starts at 9 AM.
+        if !mentionsTime(phrase) {
+            if calendar.isDate(date, inSameDayAs: now) {
+                let fivePM = calendar.date(bySettingHour: 17, minute: 0, second: 0, of: now) ?? now
+                date = fivePM > now ? fivePM : now.addingTimeInterval(3_600)
+            } else {
+                date = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: date) ?? date
+            }
+        }
+        // A past date is usually part of the title, like "Q2 report".
+        guard date > now.addingTimeInterval(-60) else { return nil }
+
+        var title = text
+        title.removeSubrange(range)
+        title = cleaned(title)
+        guard !title.isEmpty else { return nil }
+        return QuickCaptureDate(title: title, dueDate: date, phrase: phrase)
+    }
+
+    /// "Today, 5:00 PM", "Tomorrow, 9:00 AM", or "Mon, Sep 28, 9:00 AM".
+    var label: String {
+        let time = dueDate.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDateInToday(dueDate) { return "Today, \(time)" }
+        if Calendar.current.isDateInTomorrow(dueDate) { return "Tomorrow, \(time)" }
+        return dueDate.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+    }
+
+    private static func mentionsTime(_ phrase: String) -> Bool {
+        phrase.range(
+            of: #"\d:\d|\d\s*(a\.?m\.?|p\.?m\.?)\b|\bat\s+\d|\b(noon|midnight|morning|afternoon|evening|tonight|hours?|minutes?|mins?|hrs?)\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    /// Drops words left dangling by the removed date, like "Call Sam on".
+    private static func cleaned(_ title: String) -> String {
+        var words = title.split(whereSeparator: \.isWhitespace).map(String.init)
+        let connectors: Set<String> = ["on", "at", "by", "due", "for", "this", "next", "from", "until", "before", "-", "–", ","]
+        while let last = words.last, connectors.contains(last.lowercased()) { words.removeLast() }
+        while let first = words.first, connectors.contains(first.lowercased()) { words.removeFirst() }
+        return words.joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ,;:-–"))
+    }
+}
+
+/// Shows the due date read from a quick-capture title, with a way to drop it.
+struct QuickCaptureDateChip: View {
+    let detected: QuickCaptureDate
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.coral)
+            Text("Due \(detected.label)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.primaryText)
+                .contentTransition(.numericText())
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.body)
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .frame(width: 44, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Remove due date")
+            .accessibilityHint("Adds this To Do without a date")
+        }
+        .padding(.leading, AppTheme.Spacing.md)
+        .frame(minHeight: 36)
+        .background(AppTheme.accent.opacity(0.1), in: Capsule())
+        .overlay(Capsule().strokeBorder(AppTheme.accent.opacity(0.3), lineWidth: 1))
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

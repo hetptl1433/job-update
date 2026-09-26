@@ -6,8 +6,31 @@ import Foundation
 /// A public/App Store build should proxy these calls through a backend because
 /// secrets embedded in any mobile application can ultimately be extracted.
 struct OpenAIClient {
-    enum ReasoningEffort: String {
-        case low, medium, high
+    /// Lowest first. `off` is the API's `none`, renamed so it can't be
+    /// mistaken for `Optional.none`.
+    enum ReasoningEffort: String, CaseIterable {
+        case off = "none"
+        case low, medium, high, xhigh
+    }
+
+    /// Efforts `model` accepts, lowest first; empty for models that don't
+    /// reason. GPT-5.6 and GPT-6 accept every effort except GPT-6 Astra,
+    /// which rejects `none`.
+    static func reasoningEfforts(forModel model: String) -> [ReasoningEffort] {
+        if model.hasPrefix("gpt-6-astra") {
+            return ReasoningEffort.allCases.filter { $0 != .off }
+        }
+        let reasons = ["gpt-5.6", "gpt-6"].contains { model == $0 || model.hasPrefix($0 + "-") }
+        return reasons ? ReasoningEffort.allCases : []
+    }
+
+    /// The accepted effort closest to `requested`, or `nil` if `model`
+    /// doesn't reason.
+    static func effort(_ requested: ReasoningEffort, forModel model: String) -> ReasoningEffort? {
+        let supported = reasoningEfforts(forModel: model)
+        guard !supported.contains(requested) else { return requested }
+        let rank = { (effort: ReasoningEffort) in ReasoningEffort.allCases.firstIndex(of: effort) ?? 0 }
+        return supported.min { abs(rank($0) - rank(requested)) < abs(rank($1) - rank(requested)) }
     }
 
     struct JSONSchema {
@@ -68,7 +91,8 @@ struct OpenAIClient {
         user: String,
         schema: JSONSchema? = nil,
         maxOutputTokens: Int = 4_000,
-        reasoningEffort: ReasoningEffort? = nil
+        reasoningEffort: ReasoningEffort? = nil,
+        timeout: TimeInterval = 90
     ) async throws -> String {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw APIError.notConfigured("No OpenAI API key is connected.")
@@ -88,7 +112,7 @@ struct OpenAIClient {
 
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 90
+        request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         authorize(&request)
@@ -158,14 +182,10 @@ struct OpenAIClient {
                 ]
             ]
         }
-        if let reasoningEffort, supportsReasoningEffort {
-            payload["reasoning"] = ["effort": reasoningEffort.rawValue]
+        if let reasoningEffort, let effort = Self.effort(reasoningEffort, forModel: model) {
+            payload["reasoning"] = ["effort": effort.rawValue]
         }
         return payload
-    }
-
-    private var supportsReasoningEffort: Bool {
-        model == "gpt-5.6" || model.hasPrefix("gpt-5.6-")
     }
 
     private func authorize(_ request: inout URLRequest) {

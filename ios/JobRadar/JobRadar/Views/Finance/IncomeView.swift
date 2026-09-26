@@ -93,18 +93,22 @@ struct IncomeView: View {
         let summary = selectedSummary(in: overview)
         return Group {
             if let summary {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                OrbitColumns {
                     aiOrganizationStatus(summary)
                     currencySelector(overview)
-                    observedSummary(summary)
-                    reviewSection(summary)
-                    sourcesSection(summary)
-                    confirmedDepositsSection(summary)
-                    excludedDepositsSection(summary)
-                    historySection(summary)
-                    projectionSection(summary)
-                    goalSection(summary)
-                    calculatorDestination(currencyCode: summary.currencyCode)
+                    observedSummary(summary).orbitColumn(.leading)
+                    // Several sections appear only when they have something to show.
+                    Group {
+                        reviewSection(summary)
+                        sourcesSection(summary)
+                        confirmedDepositsSection(summary)
+                        excludedDepositsSection(summary)
+                        historySection(summary)
+                        projectionSection(summary)
+                        goalSection(summary)
+                        calculatorDestination(currencyCode: summary.currencyCode)
+                    }
+                    .orbitColumn(.shorter)
                     coverageFooter(summary, lastUpdatedAt: overview.lastUpdatedAt)
                 }
             } else {

@@ -2,9 +2,11 @@ import SwiftData
 import SwiftUI
 
 /// A personal-data assistant. It reasons over the user's jobs, inbox, calendar
-/// and connections via the connected ChatGPT (OpenAI) — not a generic chatbot.
-/// The request is a prompt plus a compact, structured context; the app holds no
-/// key in code (the user's key lives in the Keychain).
+/// and connections — not a generic chatbot. It answers with a model running
+/// on the iPhone or with the owner's own OpenAI key, and the composer picks
+/// the model and how long it thinks. The request is a prompt plus a compact,
+/// structured context; the app holds no key in code (an OpenAI key lives in
+/// the Keychain).
 struct AssistantView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var inbox: EmailRepository
@@ -14,24 +16,32 @@ struct AssistantView: View {
     @State private var messages: [ChatMessage] = []
     @State private var input: String
     @State private var sending = false
+    @State private var pendingReply: PendingReply?
+    @State private var streamingReply: AssistantReplySnapshot?
+    @State private var streamingThinkingSeconds: Double?
+    @State private var replyTask: Task<Void, Never>?
     @State private var showConnect = false
     @State private var showMemory = false
+    @State private var showModelPicker = false
     @State private var didRestoreConversation = false
     @State private var didSubmitInitialPrompt = false
     @AppStorage("orbit.ai.financeContextEnabled") private var shareFinanceWithAssistant = false
     @AppStorage("orbit.ai.healthContextEnabled") private var shareHealthWithAssistant = false
     private let initialPrompt: String
 
+    /// Keeps lines readable on a wide iPad.
+    private static let readableWidth: CGFloat = 760
+
     private let suggestions = [
-        "Did any recruiter contact me today?",
-        "Did anything important arrive in Outlook?",
-        "What do I need to do today?",
-        "Which companies haven't responded?",
-        "Who should I follow up with?",
-        "What interviews do I have this week?",
-        "How much money came in and went out this month?",
-        "How much confirmed income did I earn this month?",
-        "Summarize my day."
+        ChatSuggestion("Summarize my day", symbol: "sun.max", tint: AppTheme.warning, prompt: "Summarize my day."),
+        ChatSuggestion("Recruiter emails today", symbol: "envelope.badge", tint: AppTheme.info, prompt: "Did any recruiter contact me today?"),
+        ChatSuggestion("Important in Outlook", symbol: "tray.full", tint: AppTheme.info, prompt: "Did anything important arrive in Outlook?"),
+        ChatSuggestion("What to do today", symbol: "checklist", tint: AppTheme.success, prompt: "What do I need to do today?"),
+        ChatSuggestion("Companies yet to reply", symbol: "building.2", tint: AppTheme.purple, prompt: "Which companies haven't responded?"),
+        ChatSuggestion("Who to follow up with", symbol: "person.2", tint: AppTheme.purple, prompt: "Who should I follow up with?"),
+        ChatSuggestion("Interviews this week", symbol: "calendar", tint: AppTheme.coral, prompt: "What interviews do I have this week?"),
+        ChatSuggestion("Money in and out", symbol: "arrow.left.arrow.right", tint: AppTheme.success, prompt: "How much money came in and went out this month?"),
+        ChatSuggestion("Income this month", symbol: "dollarsign.circle", tint: AppTheme.success, prompt: "How much confirmed income did I earn this month?")
     ]
 
     init(initialPrompt: String = "") {
@@ -41,30 +51,44 @@ struct AssistantView: View {
 
     var body: some View {
         Group {
-            if app.connections.aiConnected {
-                VStack(spacing: 0) {
-                    if messages.isEmpty {
-                        emptyState
-                    } else {
-                        conversation
+            switch app.assistantEngine {
+            case .onDevice:
+                LocalModelGate(model: app.localModel) {
+                    chat
+                } setup: {
+                    LocalModelSetupView(model: app.localModel) {
+                        app.assistantEngine = .openAI
                     }
-                    inputBar
                 }
-            } else {
-                connectPrompt
+            case .openAI:
+                if app.connections.aiConnected {
+                    chat
+                } else {
+                    connectPrompt
+                }
             }
         }
-        .background(AppTheme.background)
-        .navigationTitle("Orbit Chat")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.background.ignoresSafeArea())
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(AppTheme.background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ChatTitle(engine: app.assistantEngine) { showModelPicker = true }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    if !messages.isEmpty {
+                    // A reply in progress would land in the new conversation.
+                    if !messages.isEmpty, !sending {
                         Button("New conversation", systemImage: "square.and.pencil") {
                             messages = []
                             AssistantConversationStore.clear()
                         }
+                    }
+                    Button("Model and thinking", systemImage: "cpu") {
+                        showModelPicker = true
                     }
                     Button("Personal memory", systemImage: "brain.head.profile") {
                         showMemory = true
@@ -81,12 +105,18 @@ struct AssistantView: View {
                 AssistantMemorySettingsView().environmentObject(app)
             }
         }
+        .sheet(isPresented: $showModelPicker, onDismiss: {
+            if app.assistantEngine == .onDevice { app.localModel.preload() }
+        }) {
+            ChatModelPickerSheet().environmentObject(app)
+        }
+        .onChange(of: app.assistantEngine) { _, engine in
+            // Give the on-device model's memory back while OpenAI answers.
+            if engine == .openAI { app.localModel.unload() }
+        }
         .onChange(of: messages) { _, messages in
             guard didRestoreConversation else { return }
             AssistantConversationStore.save(messages)
-        }
-        .onChange(of: app.connections.aiConnected) { _, connected in
-            if connected { submitInitialPromptIfNeeded() }
         }
         .task {
             if !didRestoreConversation {
@@ -95,17 +125,44 @@ struct AssistantView: View {
             }
             submitInitialPromptIfNeeded()
         }
+        .onDisappear {
+            replyTask?.cancel()
+            app.localModel.unload()
+        }
+    }
+
+    /// The conversation, shown once the selected engine can answer.
+    private var chat: some View {
+        VStack(spacing: 0) {
+            if messages.isEmpty {
+                emptyState
+            } else {
+                conversation
+            }
+            composer
+        }
+        .onAppear {
+            if app.assistantEngine == .onDevice { app.localModel.preload() }
+            submitInitialPromptIfNeeded()
+        }
     }
 
     // MARK: Not connected
 
     private var connectPrompt: some View {
-        InfoStateView(
-            systemImage: "sparkles",
-            title: "Connect ChatGPT",
-            message: "The assistant chats using your To Do list, jobs, inbox, calendars, health and any Finance summary you explicitly allow. Connect OpenAI with your API key to enable it.",
-            actionTitle: "Connect ChatGPT"
-        ) { showConnect = true }
+        VStack(spacing: AppTheme.Spacing.sm) {
+            InfoStateView(
+                systemImage: "sparkles",
+                title: "Connect ChatGPT",
+                message: "The assistant chats using your To Do list, jobs, inbox, calendars, health and any Finance summary you explicitly allow. Connect OpenAI with your API key to enable it.",
+                actionTitle: "Connect ChatGPT"
+            ) { showConnect = true }
+            Button("Use the on-device model instead") {
+                app.assistantEngine = .onDevice
+            }
+            .font(.subheadline.weight(.semibold))
+            .tint(AppTheme.coral)
+        }
         .padding(AppTheme.Spacing.lg)
     }
 
@@ -114,64 +171,86 @@ struct AssistantView: View {
     private var emptyState: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
-                    Image(systemName: "sparkles").font(.title).foregroundStyle(AppTheme.primaryText)
-                    Text("Start a conversation")
-                        .font(.title2.weight(.bold)).foregroundStyle(AppTheme.primaryText)
-                    Text("Chat naturally by typing, or start live voice for a hands-free back-and-forth.")
-                        .font(.subheadline).foregroundStyle(AppTheme.secondaryText)
+                VStack(spacing: AppTheme.Spacing.md) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [AppTheme.accent.opacity(0.24), .clear],
+                                    center: .center,
+                                    startRadius: 2,
+                                    endRadius: 64
+                                )
+                            )
+                            .frame(width: 128, height: 128)
+                        OrbitMark(size: 58)
+                    }
+                    .frame(height: 104)
+                    .accessibilityHidden(true)
+                    Text("A little clarity, on demand.")
+                        .font(.title2.weight(.semibold))
+                        .tracking(-0.6)
+                        .foregroundStyle(AppTheme.primaryText)
+                    Text("Your day has a lot of moving parts.\nLet’s make sense of them together.")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText)
                 }
-                .padding(.top, AppTheme.Spacing.xl)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, AppTheme.Spacing.sm)
+
+                if let featured = suggestions.first {
+                    ChatSuggestionCard(suggestion: featured, isFeatured: true) { ask(featured.prompt) }
+                }
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: AppTheme.Spacing.sm),
+                        GridItem(.flexible(), spacing: AppTheme.Spacing.sm)
+                    ],
+                    spacing: AppTheme.Spacing.sm
+                ) {
+                    ForEach(suggestions.dropFirst()) { suggestion in
+                        ChatSuggestionCard(suggestion: suggestion) { ask(suggestion.prompt) }
+                    }
+                }
 
                 Button {
                     app.assistantLaunch = .voice
                 } label: {
-                    Label("Start live conversation", systemImage: "waveform.circle.fill")
-                        .font(.headline)
+                    Label("Talk with Orbit live", systemImage: "waveform")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-
-                VStack(spacing: AppTheme.Spacing.sm) {
-                    ForEach(suggestions, id: \.self) { suggestion in
-                        Button {
-                            input = suggestion
-                            send()
-                        } label: {
-                            HStack {
-                                Text(suggestion).font(.subheadline).foregroundStyle(AppTheme.primaryText)
-                                Spacer()
-                                Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(AppTheme.secondaryText)
-                            }
-                            .padding(AppTheme.Spacing.md)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+                .buttonStyle(SecondaryButtonStyle(fullWidth: true))
             }
             .padding(AppTheme.Spacing.lg)
+            .frame(maxWidth: Self.readableWidth)
+            .frame(maxWidth: .infinity)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var conversation: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(spacing: AppTheme.Spacing.md) {
+                VStack(spacing: AppTheme.Spacing.xl) {
                     ForEach(messages) { message in
-                        MessageBubble(message: message)
+                        ChatMessageRow(message: message)
                             .id(message.id)
                             .transition(
-                                .scale(scale: 0.86, anchor: message.role == .user ? .bottomTrailing : .bottomLeading)
+                                .scale(scale: 0.9, anchor: message.role == .user ? .bottomTrailing : .bottomLeading)
                                 .combined(with: .opacity)
                             )
                     }
 
-                    if sending {
-                        ThinkingBubble()
-                            .id("assistant-thinking")
-                            .transition(.scale(scale: 0.86, anchor: .bottomLeading).combined(with: .opacity))
+                    if sending, let pendingReply {
+                        StreamingReplyRow(
+                            pending: pendingReply,
+                            snapshot: streamingReply,
+                            thinkingSeconds: streamingThinkingSeconds,
+                            model: app.localModel
+                        )
+                        .id("assistant-streaming")
+                        .transition(.opacity)
                     }
 
                     AssistantMemorySuggestionSlot(memory: app.assistantMemory)
@@ -179,54 +258,68 @@ struct AssistantView: View {
                     Color.clear.frame(height: 1).id("conversation-bottom")
                 }
                 .padding(AppTheme.Spacing.lg)
+                .frame(maxWidth: Self.readableWidth)
+                .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.count) { _, _ in
                 scrollToBottom(proxy)
             }
+            .onChange(of: streamingReply) { _, _ in
+                proxy.scrollTo("conversation-bottom", anchor: .bottom)
+            }
             .animation(.spring(response: 0.38, dampingFraction: 0.84), value: messages.count)
         }
     }
 
-    private var inputBar: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            TextField("Ask anything…", text: $input, axis: .vertical)
-                .lineLimit(1...4)
-                .padding(.horizontal, AppTheme.Spacing.md)
-                .padding(.vertical, AppTheme.Spacing.sm)
-                .background(
-                    AppTheme.secondarySurface,
-                    in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
-                        .strokeBorder(AppTheme.border, lineWidth: 1)
-                )
+    /// The message field, with the model and thinking choices beneath it.
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            TextField("Message Orbit", text: $input, axis: .vertical)
+                .font(.callout)
+                .foregroundStyle(AppTheme.primaryText)
+                .lineLimit(1...6)
+                .padding(.horizontal, AppTheme.Spacing.xs)
+                .padding(.top, 2)
                 .onSubmit(send)
 
-            Button {
-                app.assistantLaunch = .voice
-            } label: {
-                Image(systemName: "waveform.circle.fill")
-                    .font(.title)
-                    .foregroundStyle(AppTheme.coral)
-                    .frame(width: 44, height: 44)
+            HStack(spacing: AppTheme.Spacing.sm) {
+                ChatModelChip(localModel: app.localModel) { showModelPicker = true }
+                ChatThinkingChip(localModel: app.localModel) { showModelPicker = true }
+                Spacer(minLength: 0)
+                composerAction
             }
-            .accessibilityLabel("Open live voice")
-
-            Button { send() } label: {
-                Image(systemName: "arrow.up.circle.fill").font(.title)
-            }
-            .tint(AppTheme.brand)
-            .disabled(
-                input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || sending
-            )
         }
         .padding(AppTheme.Spacing.md)
-        .background(.ultraThinMaterial)
+        .background(
+            AppTheme.primarySurface,
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(AppTheme.border, lineWidth: 1)
+        )
+        .padding(.horizontal, AppTheme.Spacing.md)
+        .padding(.vertical, AppTheme.Spacing.sm)
+        .frame(maxWidth: Self.readableWidth)
+        .frame(maxWidth: .infinity)
+        .background(AppTheme.background)
     }
 
+    /// Stop while replying, send once there's text, and live voice otherwise.
+    @ViewBuilder
+    private var composerAction: some View {
+        if replyTask != nil {
+            ComposerButton(symbol: "stop.fill", label: "Stop response", isProminent: true, action: stopReply)
+        } else if !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ComposerButton(symbol: "arrow.up", label: "Send", isProminent: true) { send() }
+                .disabled(sending)
+        } else {
+            ComposerButton(symbol: "waveform", label: "Open live voice", isProminent: false) {
+                app.assistantLaunch = .voice
+            }
+        }
+    }
 
     // MARK: Context + send
 
@@ -238,6 +331,25 @@ struct AssistantView: View {
             shareFinance: shareFinanceWithAssistant,
             shareHealth: shareHealthWithAssistant
         )
+    }
+
+    private var currentModelName: String {
+        switch app.assistantEngine {
+        case .onDevice: app.localModel.option?.name ?? "On-device model"
+        case .openAI: AppConfig.chatModelChoice(for: AppConfig.openAIChatModel).name
+        }
+    }
+
+    private var currentThinkingMode: ChatThinkingMode? {
+        switch app.assistantEngine {
+        case .onDevice: ChatPreferences.onDeviceThinking(for: app.localModel.option)
+        case .openAI: ChatPreferences.openAIThinking(for: AppConfig.openAIChatModel)
+        }
+    }
+
+    private func ask(_ prompt: String) {
+        input = prompt
+        send()
     }
 
     private func send() {
@@ -260,26 +372,58 @@ struct AssistantView: View {
         }
         let ctx = contextBuilder.context(for: text)
         let recentHistory = Array(messages.dropLast().suffix(16))
-        Task {
+        let pending = PendingReply(
+            engine: app.assistantEngine,
+            model: currentModelName,
+            thinking: currentThinkingMode
+        )
+        let replies = app.assistant.streamAnswer(text, context: ctx, history: recentHistory)
+        pendingReply = pending
+        streamingReply = nil
+        streamingThinkingSeconds = nil
+        replyTask = Task {
+            var reply = AssistantReplySnapshot(text: "")
+            var thinkingSeconds: Double?
             do {
-                let reply = try await app.assistant.answer(
-                    text,
-                    context: ctx,
-                    history: recentHistory
-                )
-                messages.append(ChatMessage(role: .assistant, text: reply))
-                sending = false
+                for try await snapshot in replies {
+                    if thinkingSeconds == nil, snapshot.reasoning != nil, !snapshot.isThinking {
+                        thinkingSeconds = Date().timeIntervalSince(pending.startedAt)
+                        streamingThinkingSeconds = thinkingSeconds
+                    }
+                    reply = snapshot
+                    streamingReply = snapshot
+                }
+                if !reply.text.isEmpty {
+                    messages.append(pending.message(reply, thinkingSeconds: thinkingSeconds))
+                } else if !Task.isCancelled {
+                    messages.append(ChatMessage(role: .assistant, text: "I couldn't come up with an answer. Try asking another way."))
+                }
             } catch {
-                let reply = "I couldn't get a response: \(error.localizedDescription)"
-                messages.append(ChatMessage(role: .assistant, text: reply))
-                sending = false
+                // Keep whatever was already streamed rather than replacing it.
+                if reply.text.isEmpty {
+                    messages.append(ChatMessage(role: .assistant, text: "I couldn't get a response: \(error.localizedDescription)"))
+                } else {
+                    reply.text += "\n\n(Stopped early: \(error.localizedDescription))"
+                    messages.append(pending.message(reply, thinkingSeconds: thinkingSeconds))
+                }
             }
+            streamingReply = nil
+            streamingThinkingSeconds = nil
+            pendingReply = nil
+            sending = false
+            replyTask = nil
         }
+    }
+
+    /// Stops the reply in progress; anything already streamed is kept.
+    private func stopReply() {
+        replyTask?.cancel()
     }
 
     private func submitInitialPromptIfNeeded() {
         let prompt = initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard app.connections.aiConnected,
+        guard app.isAssistantChatReady,
+              didRestoreConversation,
               !didSubmitInitialPrompt,
               !prompt.isEmpty else { return }
         didSubmitInitialPrompt = true
@@ -365,6 +509,435 @@ struct AssistantView: View {
     }
 }
 
+// MARK: - Replies
+
+/// A reply on its way: what's answering and how, for the progress row and
+/// the finished message's caption.
+private struct PendingReply {
+    let engine: AssistantEngine
+    let model: String
+    /// `nil` when the model answers without a thinking step.
+    let thinking: ChatThinkingMode?
+    let startedAt = Date()
+
+    /// Whether to show thinking progress until the answer starts.
+    var showsThinking: Bool {
+        switch engine {
+        case .onDevice: thinking == .thinking
+        case .openAI: thinking.map { $0 != .instant } ?? false
+        }
+    }
+
+    func message(_ reply: AssistantReplySnapshot, thinkingSeconds: Double?) -> ChatMessage {
+        ChatMessage(
+            role: .assistant,
+            text: reply.text,
+            reasoning: reply.reasoning,
+            thinkingSeconds: thinkingSeconds,
+            detail: detail
+        )
+    }
+
+    /// For example "Qwen3 1.7B · Think · 38s" or "GPT-6 Luna · 4s". The
+    /// default mode goes unmentioned.
+    private var detail: String {
+        var parts = [model]
+        if let thinking, thinking != (engine == .onDevice ? .instant : .balanced) {
+            parts.append(thinking.title)
+        }
+        parts.append(ThinkingDisclosure.format(Date().timeIntervalSince(startedAt)))
+        return parts.joined(separator: " · ")
+    }
+}
+
+private struct ChatMessageRow: View {
+    let message: ChatMessage
+
+    var body: some View {
+        switch message.role {
+        case .user:
+            HStack {
+                Spacer(minLength: 48)
+                Text(message.text)
+                    .font(.callout)
+                    .foregroundStyle(AppTheme.onBrand)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        AppTheme.primaryButton,
+                        in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    )
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("You")
+            .accessibilityValue(message.text)
+        case .assistant:
+            AssistantMessageLayout {
+                if message.reasoning != nil || message.thinkingSeconds != nil {
+                    ThinkingDisclosure(
+                        reasoning: message.reasoning,
+                        seconds: message.thinkingSeconds,
+                        startedAt: nil
+                    )
+                }
+                ReplyText(text: message.text)
+                if let detail = message.detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .accessibilityLabel("Answered by \(detail)")
+                }
+            }
+        }
+    }
+}
+
+/// The reply while it's written: progress until the first words, then the
+/// words as they arrive.
+private struct StreamingReplyRow: View {
+    let pending: PendingReply
+    let snapshot: AssistantReplySnapshot?
+    let thinkingSeconds: Double?
+    @ObservedObject var model: LocalModelManager
+
+    var body: some View {
+        let text = snapshot?.text ?? ""
+        let isLoading = pending.engine == .onDevice && model.isLoading
+        AssistantMessageLayout {
+            if isLoading {
+                ReplyProgress(label: "Loading \(pending.model)")
+            } else if pending.showsThinking || snapshot?.reasoning != nil {
+                ThinkingDisclosure(
+                    reasoning: snapshot?.reasoning,
+                    seconds: thinkingSeconds,
+                    startedAt: text.isEmpty ? pending.startedAt : nil
+                )
+            }
+            if !text.isEmpty {
+                ReplyText(text: text, isStreaming: true)
+            } else if !isLoading, !pending.showsThinking {
+                ReplyProgress(label: pending.engine == .onDevice ? "Reading your Orbit data" : "Writing")
+            }
+        }
+    }
+}
+
+private struct AssistantMessageLayout<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
+            ZStack {
+                Circle().fill(AppTheme.secondarySurface)
+                OrbitMark(size: 20)
+            }
+            .frame(width: 28, height: 28)
+            .overlay(Circle().strokeBorder(AppTheme.border, lineWidth: 1))
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+        }
+    }
+}
+
+/// Reply text with Markdown emphasis, code and links; a cursor trails it
+/// while it's written.
+private struct ReplyText: View {
+    let text: String
+    var isStreaming = false
+
+    var body: some View {
+        Text(attributed)
+            .font(.callout)
+            .foregroundStyle(AppTheme.primaryText)
+            .tint(AppTheme.coral)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Orbit")
+            .accessibilityValue(text)
+    }
+
+    private var attributed: AttributedString {
+        var result = (try? AttributedString(
+            markdown: text,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        )) ?? AttributedString(text)
+        if isStreaming {
+            var cursor = AttributedString(" ▍")
+            cursor.foregroundColor = AppTheme.coral
+            result += cursor
+        }
+        return result
+    }
+}
+
+/// "Thinking" with a live timer while the model thinks, then "Thought for
+/// 12s", which expands to show the thinking when there's any to show.
+private struct ThinkingDisclosure: View {
+    let reasoning: String?
+    let seconds: Double?
+    /// Set while the model is still thinking.
+    let startedAt: Date?
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "brain")
+                        .symbolEffect(.pulse, isActive: startedAt != nil)
+                    title
+                    if reasoning != nil {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.bold))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.secondaryText)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(reasoning == nil)
+            .accessibilityHint(reasoning == nil ? "" : (isExpanded ? "Hides the thinking" : "Shows the thinking"))
+
+            if let reasoning {
+                if isExpanded {
+                    Text(reasoning)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, AppTheme.Spacing.md)
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(AppTheme.border).frame(width: 2)
+                        }
+                } else if startedAt != nil {
+                    // The latest thought, so there's something to watch.
+                    Text(String(reasoning.suffix(240)).replacingOccurrences(of: "\n", with: " "))
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .lineLimit(2)
+                        .truncationMode(.head)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var title: some View {
+        if let startedAt {
+            TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                Text("Thinking · \(Self.format(context.date.timeIntervalSince(startedAt)))")
+                    .monospacedDigit()
+            }
+        } else if let seconds {
+            Text("Thought for \(Self.format(seconds))")
+        } else {
+            Text("Thoughts")
+        }
+    }
+
+    /// For example "8s" or "1m 5s".
+    static func format(_ seconds: Double) -> String {
+        Duration.seconds(max(seconds, 1).rounded())
+            .formatted(.units(allowed: [.minutes, .seconds], width: .narrow))
+    }
+}
+
+private struct ReplyProgress: View {
+    let label: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isAnimating = false
+
+    var body: some View {
+        HStack(spacing: AppTheme.Spacing.sm) {
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(AppTheme.coral)
+                        .frame(width: 6, height: 6)
+                        .opacity(isAnimating ? 1 : 0.3)
+                        .animation(
+                            reduceMotion
+                                ? nil
+                                : .easeInOut(duration: 0.6).repeatForever().delay(Double(index) * 0.2),
+                            value: isAnimating
+                        )
+                }
+            }
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(AppTheme.secondaryText)
+        }
+        .padding(.vertical, 4)
+        .onAppear { isAnimating = true }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+    }
+}
+
+// MARK: - Chrome
+
+private struct ChatTitle: View {
+    let engine: AssistantEngine
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 1) {
+                Text("Orbit Chat")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+                Label(caption, systemImage: engine.systemImage)
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Orbit Chat, \(caption)")
+        .accessibilityHint("Choose the model")
+    }
+
+    private var caption: String {
+        switch engine {
+        case .onDevice: "Private · on this \(DeviceProfile.name)"
+        case .openAI: "OpenAI · your API key"
+        }
+    }
+}
+
+private struct ComposerButton: View {
+    let symbol: String
+    let label: String
+    let isProminent: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(isProminent ? AppTheme.onBrand : AppTheme.coral)
+                .frame(width: 36, height: 36)
+                .background(isProminent ? AppTheme.primaryButton : AppTheme.secondarySurface, in: Circle())
+                .overlay(
+                    Circle().strokeBorder(
+                        isProminent ? Color.white.opacity(0.16) : AppTheme.border,
+                        lineWidth: 1
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+private struct ChatSuggestion: Identifiable {
+    let title: String
+    let symbol: String
+    let tint: Color
+    /// What's asked when the suggestion is tapped.
+    let prompt: String
+
+    var id: String { prompt }
+
+    init(_ title: String, symbol: String, tint: Color, prompt: String) {
+        self.title = title
+        self.symbol = symbol
+        self.tint = tint
+        self.prompt = prompt
+    }
+}
+
+private struct ChatSuggestionCard: View {
+    let suggestion: ChatSuggestion
+    var isFeatured = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if isFeatured {
+                    HStack(spacing: AppTheme.Spacing.md) {
+                        icon
+                        VStack(alignment: .leading, spacing: 2) {
+                            title
+                            Text("Inbox, To Do, calendar and more in one answer")
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryText)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppTheme.tertiaryText)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                        icon
+                        title
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
+                }
+            }
+            .padding(AppTheme.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                AppTheme.primarySurface,
+                in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
+                    .strokeBorder(AppTheme.separator, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableCardButtonStyle())
+        .accessibilityLabel(suggestion.prompt)
+    }
+
+    private var icon: some View {
+        Image(systemName: suggestion.symbol)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(suggestion.tint)
+            .frame(width: 32, height: 32)
+            .background(
+                suggestion.tint.opacity(0.14),
+                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            )
+            .accessibilityHidden(true)
+    }
+
+    private var title: some View {
+        Text(suggestion.title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(AppTheme.primaryText)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct PressableCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Memory suggestions
+
 private struct AssistantMemorySuggestionSlot: View {
     @ObservedObject var memory: AssistantMemoryRepository
 
@@ -441,106 +1014,89 @@ private struct AssistantTaskInput {
     }
 }
 
-private struct MessageBubble: View {
-    let role: ChatMessage.Role
-    let text: String
-    var isStreaming = false
+// MARK: - On-device setup
 
-    init(message: ChatMessage) {
-        role = message.role
-        text = message.text
-    }
-
-    init(role: ChatMessage.Role, text: String, isStreaming: Bool = false) {
-        self.role = role
-        self.text = text
-        self.isStreaming = isStreaming
-    }
+/// Shows the conversation once the on-device model is on this device, and the
+/// download screen until then.
+private struct LocalModelGate<Chat: View, Setup: View>: View {
+    @ObservedObject var model: LocalModelManager
+    @ViewBuilder var chat: () -> Chat
+    @ViewBuilder var setup: () -> Setup
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: AppTheme.Spacing.sm) {
-            if role == .user { Spacer(minLength: 44) }
-
-            if role == .assistant {
-                ZStack {
-                    Circle().fill(AppTheme.secondarySurface)
-                    Image(systemName: "sparkles")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(AppTheme.primaryText)
-                }
-                .frame(width: 28, height: 28)
-                .overlay(Circle().strokeBorder(AppTheme.border, lineWidth: 1))
-                .accessibilityHidden(true)
-            }
-
-            HStack(alignment: .lastTextBaseline, spacing: 5) {
-                Text(text)
-                    .font(.subheadline)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if isStreaming {
-                    Capsule()
-                        .fill(role == .user ? AppTheme.onBrand : AppTheme.coral)
-                        .frame(width: 2, height: 15)
-                        .accessibilityHidden(true)
-                }
-            }
-            .foregroundStyle(role == .user ? AppTheme.onBrand : AppTheme.primaryText)
-            .padding(.horizontal, AppTheme.Spacing.md)
-            .padding(.vertical, 10)
-            .background(
-                role == .user ? AppTheme.brand : AppTheme.secondarySurface,
-                in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-            )
-            .overlay {
-                if role == .assistant {
-                    RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-                        .strokeBorder(AppTheme.border, lineWidth: 1)
-                }
-            }
-
-            if role == .assistant { Spacer(minLength: 44) }
+        if model.isReady {
+            chat()
+        } else {
+            setup()
         }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(role == .user ? "You" : "Orbit")
-        .accessibilityValue(text)
     }
 }
 
-private struct ThinkingBubble: View {
-    var body: some View {
-        HStack(alignment: .bottom, spacing: AppTheme.Spacing.sm) {
-            ZStack {
-                Circle().fill(AppTheme.secondarySurface)
-                Image(systemName: "sparkles")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(AppTheme.primaryText)
-            }
-            .frame(width: 28, height: 28)
-            .overlay(Circle().strokeBorder(AppTheme.border, lineWidth: 1))
+/// Until a model is downloaded: this device's power and the models it can
+/// run, with the best fit marked Recommended.
+private struct LocalModelSetupView: View {
+    @ObservedObject var model: LocalModelManager
+    let onUseOpenAI: () -> Void
 
-            HStack(spacing: 7) {
-                ProgressView().controlSize(.small)
-                Text("Thinking")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(AppTheme.secondaryText)
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppTheme.Spacing.xl) {
+                VStack(spacing: AppTheme.Spacing.sm) {
+                    ZStack {
+                        Circle().fill(AppTheme.accent.opacity(0.08)).frame(width: 82, height: 82)
+                        Image(systemName: isUnsupported ? "iphone.slash" : "lock.iphone")
+                            .font(.system(size: 34, weight: .regular))
+                            .foregroundStyle(AppTheme.coral)
+                    }
+                    .accessibilityHidden(true)
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                        .tracking(-0.6)
+                        .foregroundStyle(AppTheme.primaryText)
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, AppTheme.Spacing.lg)
+
+                if !isUnsupported {
+                    DevicePowerCard(model: model)
+                    VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+                        Text("Choose a model").sectionLabel()
+                        LocalModelList(model: model)
+                    }
+                    Text("Use Wi-Fi, and keep Orbit open while a model downloads.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                }
+
+                Button("Use OpenAI instead", action: onUseOpenAI)
+                    .font(.subheadline.weight(.semibold))
+                    .tint(AppTheme.coral)
+                    .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, AppTheme.Spacing.md)
-            .padding(.vertical, 10)
-            .background(
-                AppTheme.secondarySurface,
-                in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-                    .strokeBorder(AppTheme.border, lineWidth: 1)
-            )
-            Spacer(minLength: 44)
+            .padding(AppTheme.Spacing.lg)
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
-        .accessibilityLabel("Orbit is thinking")
+        .onAppear { model.refreshAvailability() }
+    }
+
+    private var isUnsupported: Bool {
+        if case .unsupported = model.availability { return true }
+        return false
+    }
+
+    private var title: String {
+        isUnsupported ? "On-device chat isn't available" : "Run Orbit Chat on this \(DeviceProfile.name)"
+    }
+
+    private var message: String {
+        if case .unsupported(let reason) = model.availability { return reason }
+        return "Download a model once. After that, chat works offline, and your questions and Orbit data never leave this \(DeviceProfile.name). The recommended model fits its chip and memory best."
     }
 }
 

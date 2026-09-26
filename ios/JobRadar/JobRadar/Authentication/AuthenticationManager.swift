@@ -7,6 +7,9 @@ import Foundation
 @MainActor
 final class AuthenticationManager {
     private let google: GoogleAuthProviding
+    /// Changes on every sign-in, sign-out and scope grant. A restore can finish
+    /// behind the main screen, so it must not write back an older profile.
+    private var sessionGeneration = 0
 
     init(google: GoogleAuthProviding? = nil) {
         self.google = google ?? DefaultGoogleAuthService()
@@ -15,22 +18,34 @@ final class AuthenticationManager {
     // MARK: Sign-in / restore
 
     func signIn(requiredScopes: [String] = []) async throws -> UserSession {
+        sessionGeneration += 1
         let result = try await google.signIn(additionalScopes: requiredScopes)
         return persist(result)
     }
 
+    /// Returns nil if the owner signed in, signed out or granted scopes while
+    /// Google was answering.
     func restoreSession() async -> UserSession? {
+        let generation = sessionGeneration
         // The cached profile is the primary Orbit identity. Additional Gmail
         // sign-ins must never replace it just because they were authorized last.
         let cached = UserSession.restore()
-        if let result = try? await google.restore(expectedUserID: cached?.userID) {
-            return persist(result)
+        let result = try? await google.restore(expectedUserID: cached?.userID)
+        guard generation == sessionGeneration else {
+            // Restoring stored this account's credential again. Drop it if the
+            // owner signed out of it meanwhile.
+            if let result, result.userID != UserSession.restore()?.userID {
+                google.forgetUser(result.userID)
+            }
+            return nil
         }
+        if let result { return persist(result) }
         return cached
     }
 
     func requestScopes(_ scopes: [String]) async throws -> UserSession {
         guard let primary = UserSession.restore() else { throw AuthError.underlying("Sign in first.") }
+        sessionGeneration += 1
         let result = try await google.addScopes(scopes, for: primary.userID)
         return persist(result)
     }
@@ -54,12 +69,14 @@ final class AuthenticationManager {
     // MARK: Sign-out / disconnect
 
     func signOut() {
+        sessionGeneration += 1
         google.signOut()
         clearTokens()
         UserSession.clear()
     }
 
     func disconnect() async {
+        sessionGeneration += 1
         try? await google.disconnect()
         clearTokens()
         UserSession.clear()

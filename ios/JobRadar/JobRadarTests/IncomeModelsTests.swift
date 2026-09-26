@@ -2523,7 +2523,7 @@ private func jobUpdate(sourceMessageID: String) -> DetectedJobUpdate {
         sourceMailbox: "person@example.com",
         sourceSender: "recruiter@example.com",
         sourceSubject: "Interview update",
-        sourceDate: .now
+        sourceDate: Date(timeIntervalSince1970: 1_786_435_080)
     )
 }
 

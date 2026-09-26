@@ -11,13 +11,22 @@ struct HomeView: View {
     @Query(sort: [SortDescriptor(\JobApplication.updatedAt, order: .reverse)])
     private var jobs: [JobApplication]
 
-    @State private var showSettings = false
     @State private var showCalendar = false
-    @State private var showHealth = false
     @State private var editingTask: TaskItem?
     @State private var placeholderIndex = 0
     @State private var completingTaskIDs: Set<UUID> = []
     @State private var completionFeedback = 0
+    @State private var lastCompletedID: UUID?
+    @State private var selectedMessage: InboxMessage?
+    @State private var rescheduleFeedback = 0
+    @State private var taskRowWidth: CGFloat = 0
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.orbitWideLayout) private var isWide
+
+    /// A wide iPad has room to show more of each list.
+    private var taskLimit: Int { isWide ? 5 : 3 }
+    private var eventLimit: Int { isWide ? 3 : 1 }
+    private var messageLimit: Int { isWide ? 3 : 2 }
 
     private let placeholders = [
         "Anything important today?",
@@ -28,77 +37,109 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            GeometryReader { viewport in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.xxl) {
+            ScrollView {
+                OrbitColumns {
+                    greeting.orbitAppear(0)
+                    VStack(spacing: AppTheme.Spacing.md) {
                         todoSection
-                            .padding(AppTheme.Spacing.xl)
-                            .frame(
-                                maxWidth: .infinity,
-                                minHeight: min(max(360, viewport.size.height * 0.5), 480),
-                                alignment: .topLeading
-                            )
-                            .background(
-                                AppTheme.primarySurface,
-                                in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-                            )
-                            .overlay {
-                                RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
-                                    .strokeBorder(AppTheme.border, lineWidth: 1)
-                            }
-
-                        attentionSection
-                        todaySection
-                        jobsSummary
-                        inboxSummary
-                        syncBanner
-                        financeSummary
-                        healthSummary
-                        assistantSection
+                        taskSuggestions
                     }
-                    .padding(AppTheme.Spacing.lg)
-                    .padding(.bottom, AppTheme.Spacing.xxl)
-                }
-                .background(AppTheme.background)
-                .refreshable { await app.refreshDashboard() }
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { AppLogo(size: 26) }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { showSettings = true } label: {
-                            Image(systemName: "person.crop.circle").font(.title3)
-                        }
-                        .tint(AppTheme.primaryText)
+                    .orbitAppear(1)
+                    .orbitColumn(.leading)
+                    if !attention.isEmpty || !app.detectedJobUpdates.isEmpty {
+                        attentionSection.orbitAppear(2).orbitColumn(.leading)
                     }
+                    todaySection.orbitAppear(2).orbitColumn(.trailing)
+                    perspectiveSection.orbitAppear(3).orbitColumn(.trailing)
+                    jobsSummary.orbitAppear(4).orbitColumn(.leading)
+                    inboxSummary.orbitAppear(4).orbitColumn(.trailing)
+                    assistantSection.orbitAppear(5).orbitColumn(.leading)
+                    syncBanner.orbitAppear(5).orbitColumn(.trailing)
                 }
-                .sheet(isPresented: $showSettings) { SettingsView() }
-                .sheet(isPresented: $showCalendar) { CalendarTimelineView() }
-                .sheet(isPresented: $showHealth) { HealthView() }
-                .sheet(item: $editingTask) { item in
-                    TaskEditor(item: item) { saved in
-                        if tasks.tasks.contains(where: { $0.id == saved.id }) {
-                            tasks.update(saved)
-                        } else {
-                            tasks.add(saved)
-                        }
-                    }
-                }
-                .task {
-                    await app.jobs.refresh()
-                    if app.connections.calendarConnected { await app.refreshCalendar(presentErrors: false) }
-                    if app.connections.healthConnected { await app.health.refresh() }
-                    if app.finance.isBackendConfigured { await app.finance.load(showLoading: false) }
+                .padding(.horizontal, AppTheme.Spacing.page)
+                .padding(.top, AppTheme.Spacing.lg)
+                .padding(.bottom, AppTheme.Spacing.xxl)
+            }
+            .background(AppTheme.background)
+            .orbitNavigationChrome()
+            .refreshable { await app.refreshDashboard() }
+            .sheet(isPresented: $showCalendar) { CalendarTimelineView() }
+            .inboxMessageDetail($selectedMessage)
+            .sheet(item: $editingTask) { item in
+                TaskEditor(item: item) { saved in
+                    if tasks.tasks.contains(where: { $0.id == saved.id }) { tasks.update(saved) }
+                    else { tasks.add(saved) }
                 }
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let id = lastCompletedID {
+                    HStack(spacing: AppTheme.Spacing.md) {
+                        Label("One less thing on your mind.", systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(AppTheme.primaryText)
+                        Spacer(minLength: 0)
+                        Button("Undo") {
+                            _ = tasks.setCompletion(id, isCompleted: false)
+                            lastCompletedID = nil
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppTheme.coral)
+                        .frame(minHeight: 44)
+                    }
+                    .padding(.horizontal, AppTheme.Spacing.lg)
+                    .background(AppTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md))
+                    .padding(.horizontal, AppTheme.Spacing.page)
+                    .padding(.bottom, AppTheme.Spacing.sm)
+                }
+            }
+            .task(id: lastCompletedID) {
+                guard let id = lastCompletedID else { return }
+                try? await Task.sleep(for: .seconds(6))
+                guard !Task.isCancelled, lastCompletedID == id else { return }
+                lastCompletedID = nil
+            }
+            .task { await app.refreshHomeIfStale() }
         }
         .sensoryFeedback(.success, trigger: completionFeedback)
+        .sensoryFeedback(.selection, trigger: rescheduleFeedback)
     }
 
     // MARK: Greeting
 
     private var greeting: some View {
-        Text("\(timeGreeting), \(app.user?.firstName ?? "there")")
-            .font(.subheadline)
-            .foregroundStyle(AppTheme.secondaryText)
+        VStack(alignment: .leading, spacing: AppTheme.Spacing.sm) {
+            Text(Date.now, format: .dateTime.weekday(.wide).month(.wide).day())
+                .sectionLabel()
+            (Text("\(timeGreeting), \(app.user?.firstName ?? "there")") + Text(".").foregroundColor(AppTheme.coral))
+                .font(.title.weight(.semibold))
+                .tracking(-0.8)
+                .foregroundStyle(AppTheme.primaryText)
+                .accessibilityAddTraits(.isHeader)
+            Text(dayBrief)
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.3), value: dayBrief)
+        }
+    }
+
+    /// One line on what the day holds, e.g. "2 due today · Interview at 3:00 PM".
+    private var dayBrief: String {
+        let open = tasks.prioritizedOpen
+        let overdue = open.filter(\.isOverdue).count
+        let dueToday = open.filter(\.isDueToday).count
+        var parts: [String] = []
+        if overdue > 0 { parts.append("\(overdue) overdue") }
+        if dueToday > 0 { parts.append("\(dueToday) due today") }
+        if let next = app.calendarState.value?.first(where: {
+            !$0.isAllDay && $0.start > .now && Calendar.current.isDateInToday($0.start)
+        }) {
+            parts.append("\(next.title) at \(next.start.formatted(date: .omitted, time: .shortened))")
+        }
+        if !attention.isEmpty {
+            parts.append("\(attention.count) follow-up\(attention.count == 1 ? "" : "s")")
+        }
+        return parts.isEmpty ? "Nothing urgent. A clear view of what’s next." : parts.joined(separator: " · ")
     }
 
     private var timeGreeting: String {
@@ -112,54 +153,11 @@ struct HomeView: View {
     // MARK: AI input
 
     private var assistantSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: "Ask Orbit")
-            aiInput
-        }
-    }
-
-    private var aiInput: some View {
-        HStack(spacing: AppTheme.Spacing.sm) {
-            Button {
-                app.assistantLaunch = .chat
-            } label: {
-                HStack(spacing: AppTheme.Spacing.md) {
-                    Image(systemName: "sparkles").foregroundStyle(AppTheme.brand)
-                    Text(placeholders[placeholderIndex])
-                        .font(.body)
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .lineLimit(1)
-                        .id(placeholderIndex)
-                        .transition(.opacity)
-                    Spacer()
-                }
-            }
-            .buttonStyle(.plain)
-
-            Divider().frame(height: 24)
-
-            Button { app.assistantLaunch = .voice } label: {
-                Image(systemName: "mic.fill")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(AppTheme.primaryText)
-                    .frame(width: 36, height: 36)
-                    .background(AppTheme.primarySurface, in: Circle())
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Talk to Orbit")
-        }
-        .padding(.vertical, 5)
-        .padding(.leading, AppTheme.Spacing.lg)
-        .padding(.trailing, AppTheme.Spacing.sm)
-        .background(AppTheme.secondarySurface, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous).strokeBorder(AppTheme.border, lineWidth: 1))
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 3_500_000_000)
-                withAnimation(.easeInOut) { placeholderIndex = (placeholderIndex + 1) % placeholders.count }
-            }
-        }
+        OrbitAssistantCard(
+            prompt: placeholders[placeholderIndex],
+            onChat: { app.openAssistant() },
+            onVoice: { app.assistantLaunch = .voice }
+        )
     }
 
     // MARK: Sync banner
@@ -199,102 +197,105 @@ struct HomeView: View {
     // MARK: To do
 
     private var todoSection: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.lg) {
-            HStack(alignment: .top, spacing: AppTheme.Spacing.md) {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
-                    Text("To Do")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundStyle(AppTheme.primaryText)
-                    greeting
-                    Text(todoSummary)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.secondaryText)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: AppTheme.Spacing.sm) {
+                Text("To do")
+                    .font(.title2.weight(.semibold))
+                    .tracking(-0.4)
+                    .foregroundStyle(AppTheme.primaryText)
+                Text(todoSummary)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                OrbitIconButton(title: "Add To Do", symbol: "plus") {
+                    app.quickTaskCaptureRequested = true
                 }
-                Spacer()
-                Button { app.quickTaskCaptureRequested = true } label: {
-                    Image(systemName: "plus")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(AppTheme.onBrand)
-                        .frame(width: 44, height: 44)
-                        .background(AppTheme.brand, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add To Do")
             }
-
-            Divider().overlay(AppTheme.separator)
+            .padding(.bottom, AppTheme.Spacing.md)
 
             if tasks.prioritizedOpen.isEmpty {
-                VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.largeTitle)
-                        .foregroundStyle(AppTheme.secondaryText)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Nothing urgent")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(AppTheme.primaryText)
-                        Text("Add a task or scan email for suggested actions.")
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.secondaryText)
-                    }
-                    Button {
-                        app.quickTaskCaptureRequested = true
-                    } label: {
-                        Label("Add your first task", systemImage: "plus")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                }
-                .frame(maxWidth: .infinity, minHeight: 180, alignment: .leading)
+                InfoStateView(
+                    systemImage: "checkmark.circle",
+                    title: "A little breathing room",
+                    message: "Add a task or scan email for suggested actions.",
+                    actionTitle: "Add your first task"
+                ) { app.quickTaskCaptureRequested = true }
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(tasks.prioritizedOpen.prefix(7).enumerated()), id: \.element.id) { index, task in
-                        HomeTaskRow(
-                            item: task,
-                            isCompleting: completingTaskIDs.contains(task.id),
-                            onToggle: { complete(task) },
-                            onEdit: { editingTask = task }
-                        )
-                        .transition(
-                            .asymmetric(
-                                insertion: .opacity,
-                                removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .leading))
-                            )
-                        )
-                        if index < min(tasks.prioritizedOpen.count, 7) - 1 {
-                            Divider().overlay(AppTheme.separator)
+                ForEach(Array(tasks.prioritizedOpen.prefix(taskLimit).enumerated()), id: \.element.id) { index, task in
+                    HomeTaskRow(
+                        item: task,
+                        isCompleting: completingTaskIDs.contains(task.id),
+                        onToggle: { complete(task) },
+                        onEdit: { editingTask = task }
+                    )
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { taskRowWidth = $0 }
+                    .contextMenu {
+                        Button { complete(task) } label: {
+                            Label("Complete", systemImage: "checkmark.circle")
                         }
+                        Button { editingTask = task } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        if !(task.dueDate.map(Calendar.current.isDateInTomorrow) ?? false) {
+                            Button { moveToTomorrow(task) } label: {
+                                Label("Do tomorrow", systemImage: "sunrise")
+                            }
+                        }
+                    } preview: {
+                        // The card's gradient can't be matched per row, so the
+                        // preview draws the row on its own surface.
+                        HomeTaskRow(item: task, onToggle: {}, onEdit: {})
+                            .padding(.horizontal, AppTheme.Spacing.lg)
+                            .frame(width: taskRowWidth > 0 ? taskRowWidth + AppTheme.Spacing.lg * 2 : nil)
+                            .background(AppTheme.primarySurface)
+                    }
+                    .transition(.opacity)
+                    if index < min(tasks.prioritizedOpen.count, taskLimit) - 1 {
+                        Divider().overlay(AppTheme.separator).padding(.leading, 44)
                     }
                 }
             }
-
-            if !tasks.suggestions.isEmpty {
-                Button {
-                    app.selectedTab = .tasks
-                } label: {
-                    HStack(spacing: AppTheme.Spacing.sm) {
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(AppTheme.brand)
-                        Text("\(tasks.suggestions.count) suggested action\(tasks.suggestions.count == 1 ? "" : "s") from email")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppTheme.primaryText)
-                        Spacer()
+            Divider().overlay(AppTheme.separator).padding(.top, AppTheme.Spacing.md)
+            HStack(spacing: AppTheme.Spacing.md) {
+                Text("\(tasks.completed.count) of \(tasks.tasks.count) complete")
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
+                ProgressView(value: Double(tasks.completed.count), total: Double(max(tasks.tasks.count, 1)))
+                    .tint(AppTheme.accent)
+                    .accessibilityLabel("Task progress")
+                Button { app.selectedTab = .tasks } label: {
+                    HStack(spacing: 3) {
+                        Text("See all")
                         Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(AppTheme.secondaryText)
                     }
-                    .padding(AppTheme.Spacing.md)
-                    .background(
-                        AppTheme.secondarySurface,
-                        in: RoundedRectangle(cornerRadius: AppTheme.Radius.sm, style: .continuous)
-                    )
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .frame(minHeight: 44)
+                    .fixedSize()
                 }
                 .buttonStyle(.plain)
             }
+        }
+        .orbitFocusSurface(padding: AppTheme.Spacing.lg)
+    }
 
-            Button("See all") {
-                app.selectedTab = .tasks
+    @ViewBuilder
+    private var taskSuggestions: some View {
+        if !tasks.suggestions.isEmpty {
+            Button { app.selectedTab = .tasks } label: {
+                HStack(spacing: AppTheme.Spacing.sm) {
+                    Image(systemName: "sparkles").foregroundStyle(AppTheme.coral)
+                    Text("\(tasks.suggestions.count) suggested task\(tasks.suggestions.count == 1 ? "" : "s") from your inbox")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(AppTheme.tertiaryText)
+                }
+                .frame(minHeight: 24)
+                .orbitFocusSurface(padding: AppTheme.Spacing.md)
             }
-            .buttonStyle(SecondaryButtonStyle(fullWidth: true))
+            .buttonStyle(OrbitPressStyle())
         }
     }
 
@@ -323,11 +324,22 @@ struct HomeView: View {
             let didComplete = withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                 tasks.setCompletion(current.id, isCompleted: true)
             }
-            if didComplete { completionFeedback += 1 }
+            if didComplete { completionFeedback += 1; lastCompletedID = current.id }
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
                 _ = completingTaskIDs.remove(item.id)
             }
         }
+    }
+
+    /// Matches the To Do list's Tomorrow action: 9 AM the next day.
+    private func moveToTomorrow(_ item: TaskItem) {
+        let calendar = Calendar.current
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: .now)) ?? .now
+        let due = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+        let didMove = withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            tasks.reschedule(item, to: due)
+        }
+        if didMove { rescheduleFeedback += 1 }
     }
 
     // MARK: Needs your attention
@@ -384,59 +396,37 @@ struct HomeView: View {
     // MARK: Jobs summary
 
     private var jobsSummary: some View {
-        VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: "Jobs", actionTitle: "Open") { app.selectedTab = .jobs }
-            VStack(spacing: 0) {
-                metric("\(jobs.filter { !$0.isClosed }.count)", "Active applications")
-                Divider().overlay(AppTheme.separator)
-                metric("\(jobs.filter { $0.status == .interview || $0.status == .finalInterview }.count)", "Interviews")
-                Divider().overlay(AppTheme.separator)
-                metric("\(jobs.filter { [.applied, .screening, .recruiterContact].contains($0.status) }.count)", "Waiting for a response")
-                Divider().overlay(AppTheme.separator)
-                metric("\(attention.count)", "Follow-ups due")
-
-                if let recent = jobs.prefix(3).map({ $0 }).nilIfEmpty {
-                    Divider().overlay(AppTheme.separator)
-                    Text("Recently updated")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.secondaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, AppTheme.Spacing.lg)
-                        .padding(.top, AppTheme.Spacing.lg)
-
-                    ForEach(Array(recent.enumerated()), id: \.element.id) { index, job in
-                        CompactJobRow(job: job)
-                            .padding(.horizontal, AppTheme.Spacing.lg)
-                            .padding(.vertical, AppTheme.Spacing.md)
-                        if index < recent.count - 1 {
-                            Divider().overlay(AppTheme.separator)
-                                .padding(.leading, AppTheme.Spacing.lg)
-                        }
+        let active = jobs.filter { $0.status.isActive }
+        let interviews = active.filter { $0.status == .interview || $0.status == .finalInterview }
+        return VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
+            SectionHeader(title: "Moving forward", actionTitle: "Job tracker") { app.selectedTab = .jobs }
+            Button { app.selectedTab = .jobs } label: {
+                HStack(spacing: AppTheme.Spacing.md) {
+                    Image(systemName: "briefcase")
+                        .foregroundStyle(AppTheme.coral)
+                        .frame(width: 40, height: 40)
+                        .background(AppTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(interviews.isEmpty ? "\(active.count) active applications" : "\(interviews.count) interview\(interviews.count == 1 ? "" : "s") in motion")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AppTheme.primaryText)
+                        Text(attention.isEmpty ? "Every opportunity, in one place" : "\(attention.count) follow-up\(attention.count == 1 ? "" : "s") due")
+                            .font(.caption).foregroundStyle(AppTheme.secondaryText)
                     }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(AppTheme.tertiaryText)
                 }
+                .cardSurface()
             }
-            .cardSurface(padding: 0)
+            .buttonStyle(OrbitPressStyle())
         }
-    }
-
-    private func metric(_ value: String, _ label: String) -> some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            Text(label)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(AppTheme.primaryText)
-            Spacer()
-            Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(AppTheme.primaryText)
-        }
-        .padding(AppTheme.Spacing.lg)
     }
 
     // MARK: Inbox summary
 
     private var inboxSummary: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: "Inbox")
+            SectionHeader(title: "Inbox", actionTitle: "Open") { app.selectedTab = .inbox }
             Group {
                 switch inbox.state {
                 case .disconnected:
@@ -450,7 +440,12 @@ struct HomeView: View {
                                   message: "You're all clear for now.")
                 case let .loaded(messages):
                     VStack(spacing: 0) {
-                        ForEach(messages.prefix(2)) { InboxRow(message: $0) }
+                        ForEach(messages.prefix(messageLimit)) { message in
+                            InboxMessageButton(
+                                message: message,
+                                isInToDo: tasks.tasks.contains { $0.relatedEmailID == message.id }
+                            ) { selectedMessage = message }
+                        }
                     }
                 case let .failed(message):
                     InfoStateView(systemImage: "exclamationmark.triangle", title: "Couldn't load inbox", message: message)
@@ -467,7 +462,7 @@ struct HomeView: View {
     private var todaySection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
             SectionHeader(
-                title: "Upcoming",
+                title: "Up next",
                 actionTitle: app.calendarState.value?.isEmpty == false ? "See all" : nil
             ) { showCalendar = true }
             switch app.calendarState {
@@ -488,13 +483,13 @@ struct HomeView: View {
                     .cardSurface()
             case .loaded(let events):
                 VStack(spacing: 0) {
-                    ForEach(Array(events.prefix(5).enumerated()), id: \.element.id) { index, event in
+                    ForEach(Array(events.prefix(eventLimit).enumerated()), id: \.element.id) { index, event in
                         CalendarHomeRow(
                             event: event,
                             isInToDo: tasks.tasks.contains { $0.relatedCalendarEventID == event.id },
                             onAddToDo: { app.addCalendarEventToTasks(event) }
                         )
-                        if index < min(events.count, 5) - 1 { Divider().overlay(AppTheme.separator) }
+                        if index < min(events.count, eventLimit) - 1 { Divider().overlay(AppTheme.separator) }
                     }
                 }
                 .cardSurface(padding: 0)
@@ -502,91 +497,40 @@ struct HomeView: View {
         }
     }
 
-    // MARK: Finance + Health summaries
+    // MARK: Finance + Health at a glance
 
-    @ViewBuilder
-    private var financeSummary: some View {
-        if case let .loaded(overview) = app.finance.state {
-            VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-                SectionHeader(title: "Finance", actionTitle: "View", action: { app.selectedTab = .finance })
-                VStack(spacing: 0) {
-                    HomeFinanceMetric(
-                        title: "Cash",
-                        value: overview.totalCash.formatted(
-                            .currency(code: overview.currencyCode).precision(.fractionLength(0...2))
-                        ),
-                        tint: AppTheme.success
-                    )
-                    Divider().overlay(AppTheme.separator)
-                    HomeFinanceMetric(
-                        title: "Cards owed",
-                        value: overview.totalCreditBalance.formatted(
-                            .currency(code: overview.currencyCode).precision(.fractionLength(0...2))
-                        ),
-                        tint: AppTheme.coral
-                    )
-                    Divider().overlay(AppTheme.separator)
-                    HomeFinanceMetric(
-                        title: "Month net",
-                        value: overview.monthlyNetFlow.formatted(
-                            .currency(code: overview.currencyCode).precision(.fractionLength(0...2))
-                        ),
-                        tint: overview.monthlyNetFlow >= 0 ? AppTheme.success : AppTheme.coral
-                    )
-                }
-                .cardSurface(padding: 0)
-            }
-        }
-    }
-
-    private var healthSummary: some View {
+    private var perspectiveSection: some View {
         VStack(alignment: .leading, spacing: AppTheme.Spacing.md) {
-            SectionHeader(title: "Health", actionTitle: "Details", action: { showHealth = true })
-            switch app.health.state {
-            case .loaded(let summary):
-                VStack(spacing: 0) {
-                    ForEach(Array(summary.metrics.prefix(4).enumerated()), id: \.element.id) { index, value in
-                        HStack(spacing: AppTheme.Spacing.md) {
-                            Image(systemName: value.systemImage)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(AppTheme.brand)
-                                .frame(width: 36, height: 36)
-                                .background(AppTheme.secondarySurface, in: Circle())
-                            Text(value.title)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(AppTheme.primaryText)
-                            Spacer()
-                            Text(value.value)
-                                .font(.headline.weight(.semibold))
-                                .foregroundStyle(AppTheme.primaryText)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.75)
-                        }
-                        .padding(AppTheme.Spacing.lg)
-                        if index < min(summary.metrics.count, 4) - 1 {
-                            Divider().overlay(AppTheme.separator)
-                        }
-                    }
-                }
-                .cardSurface(padding: 0)
-            case .loading:
-                LoadingStateView(message: "Loading Apple Health…").cardSurface()
-            case .empty:
-                InfoStateView(systemImage: "heart", title: "No recent health data",
-                              message: "Orbit is connected, but the approved categories have no recent data.")
-                    .cardSurface()
-            case .failed(let message):
-                InfoStateView(systemImage: "exclamationmark.triangle", title: "Couldn't load Health",
-                              message: message, actionTitle: "Try again") { Task { await app.connectHealth() } }
-                    .cardSurface()
-            default:
-                InfoStateView(systemImage: "heart", title: "Connect Apple Health",
-                              message: "See your sleep, steps and workouts alongside everything else.",
-                              actionTitle: "Connect Apple Health") { Task { await app.connectHealth() } }
-                    .cardSurface()
+            SectionHeader(title: "A little perspective")
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: AppTheme.Spacing.md) { financeTile; healthTile }
+            } else {
+                HStack(alignment: .top, spacing: AppTheme.Spacing.md) { financeTile; healthTile }
             }
         }
     }
+
+    private var financeTile: some View {
+        let overview = app.finance.state.value
+        return OrbitSummaryTile(
+            title: "Spending", symbol: "creditcard",
+            value: overview.map { $0.adjustedMonthlyOutflow.formatted(.currency(code: $0.currencyCode).precision(.fractionLength(0))) } ?? "—",
+            detail: overview == nil ? "Open Finance to connect or review accounts" : "This month so far",
+            action: { app.selectedTab = .finance }
+        )
+    }
+
+    private var healthTile: some View {
+        let summary = app.health.state.value
+        return OrbitSummaryTile(
+            title: "Movement", symbol: "figure.walk",
+            value: summary?.steps.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—",
+            detail: summary == nil ? "Open Apple Health" : summary?.steps == nil ? "No step sample" : "Steps recorded today",
+            tint: AppTheme.success,
+            action: { app.selectedTab = .health }
+        )
+    }
+
 }
 
 private struct HomeTaskRow: View {
@@ -603,8 +547,8 @@ private struct HomeTaskRow: View {
                 title: item.title,
                 isCompleted: item.isCompleted,
                 isCompleting: isCompleting,
-                idleColor: AppTheme.brand,
-                iconFont: .title2,
+                idleColor: item.priority == .high ? AppTheme.coral : AppTheme.tertiaryText,
+                iconFont: .title3,
                 onToggle: onToggle
             )
 
@@ -612,7 +556,7 @@ private struct HomeTaskRow: View {
                 HStack(spacing: AppTheme.Spacing.md) {
                     VStack(alignment: .leading, spacing: AppTheme.Spacing.xs) {
                         Text(item.title)
-                            .font(.body.weight(.semibold))
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(showsCompletedState ? AppTheme.tertiaryText : AppTheme.primaryText)
                             .strikethrough(showsCompletedState)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -662,6 +606,7 @@ private struct HomeTaskRow: View {
             .opacity(isCompleting ? 0.48 : 1)
             .accessibilityLabel("Edit \(item.title)")
         }
+        .frame(minHeight: 76)
         .padding(.vertical, AppTheme.Spacing.sm)
     }
 
@@ -697,36 +642,190 @@ private struct HomeFinanceMetric: View {
 struct CalendarHomeRow: View {
     let event: CalendarEvent
     var isInToDo = false
+    /// The full timeline groups rows under day headers, so they omit the date.
+    var showsDate = true
     let onAddToDo: () -> Void
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
-        HStack(spacing: AppTheme.Spacing.md) {
-            VStack(spacing: 1) {
-                Text(event.start, format: .dateTime.month(.abbreviated).day())
-                    .font(.caption2.weight(.semibold)).foregroundStyle(AppTheme.secondaryText)
-                Text(event.start, format: .dateTime.hour().minute())
-                    .font(.caption.weight(.bold)).foregroundStyle(event.isImportant ? AppTheme.brand : AppTheme.primaryText)
-            }
-            .frame(width: 58)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(event.title).font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.primaryText).lineLimit(1)
-                if let location = event.location, !location.isEmpty {
-                    Text(location).font(.caption).foregroundStyle(AppTheme.secondaryText).lineLimit(1)
-                }
-                Text(event.provider.label).font(.caption2).foregroundStyle(AppTheme.tertiaryText)
-            }
-            Spacer()
-            Button(action: onAddToDo) {
-                Image(systemName: isInToDo ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.title3)
-                    .foregroundStyle(isInToDo ? AppTheme.success : AppTheme.primaryText)
-            }
-            .buttonStyle(.plain)
-            .disabled(isInToDo)
-            .accessibilityLabel(isInToDo ? "Already in To Do" : "Add to To Do")
+        // Refreshes "Starts in" and when Join appears without a reload.
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            row(timing: EventTiming(event: event, now: context.date))
         }
-        .padding(AppTheme.Spacing.lg)
+        .cardRowPreviewSurface()
+        .contextMenu {
+            if let url = joinURL {
+                Button { openURL(url) } label: {
+                    Label("Join meeting", systemImage: "video")
+                }
+            } else if let url = event.meetingURL {
+                Button { openURL(url) } label: {
+                    Label("Open event link", systemImage: "safari")
+                }
+            }
+            Button(action: onAddToDo) {
+                Label(isInToDo ? "In your To Do" : "Add to To Do", systemImage: isInToDo ? "checkmark.circle" : "plus.circle")
+            }
+            .disabled(isInToDo)
+            if let mapsURL {
+                Button { openURL(mapsURL) } label: {
+                    Label("Open in Maps", systemImage: "map")
+                }
+            }
+        }
     }
+
+    private func row(timing: EventTiming) -> some View {
+        HStack(spacing: AppTheme.Spacing.md) {
+            timeColumn
+                .frame(width: 62, alignment: .leading)
+
+            Capsule()
+                .fill(timing.isLive ? AppTheme.accent : AppTheme.separator)
+                .frame(width: timing.isLive ? 3 : 1.5)
+                .frame(maxHeight: .infinity)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(event.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+                    .lineLimit(2)
+                if !detailLine.isEmpty {
+                    Text(detailLine)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .lineLimit(1)
+                }
+                if let status = timing.label {
+                    Label(status, systemImage: timing.isLive ? "dot.radiowaves.left.and.right" : "clock")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AppTheme.coral)
+                } else {
+                    Text(event.provider.label)
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let url = joinURL, timing.canJoin {
+                Button { openURL(url) } label: {
+                    Text("Join")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppTheme.onAccent)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 32)
+                        .background(AppTheme.primaryButton, in: Capsule())
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Join \(event.title)")
+            } else {
+                Button(action: onAddToDo) {
+                    Image(systemName: isInToDo ? "checkmark.circle.fill" : "plus.circle")
+                        .font(.title3)
+                        .foregroundStyle(isInToDo ? AppTheme.success : AppTheme.secondaryText)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isInToDo)
+                .accessibilityLabel(isInToDo ? "Already in To Do" : "Add \(event.title) to To Do")
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.vertical, AppTheme.Spacing.md)
+        .padding(.horizontal, AppTheme.Spacing.lg)
+    }
+
+    @ViewBuilder
+    private var timeColumn: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if showsDate {
+                Text(dayLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .textCase(.uppercase)
+            }
+            if event.isAllDay {
+                Text("All day")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.primaryText)
+            } else {
+                Text(event.start, format: .dateTime.hour().minute())
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(event.isImportant ? AppTheme.coral : AppTheme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+    }
+
+    private var dayLabel: String {
+        if Calendar.current.isDateInToday(event.start) { return "Today" }
+        if Calendar.current.isDateInTomorrow(event.start) { return "Tomorrow" }
+        return event.start.formatted(.dateTime.month(.abbreviated).day())
+    }
+
+    /// Duration and place, e.g. "45 min · Room 4B".
+    private var detailLine: String {
+        var parts: [String] = []
+        if !event.isAllDay, let end = event.end, end > event.start {
+            parts.append(Duration.seconds(end.timeIntervalSince(event.start))
+                .formatted(.units(allowed: [.hours, .minutes], width: .abbreviated)))
+        }
+        if let location = event.location?.trimmingCharacters(in: .whitespacesAndNewlines), !location.isEmpty {
+            parts.append(location)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Providers also fill `meetingURL` with the event's own web page (Outlook)
+    /// or any link on the event (Apple), so only video-call hosts get Join.
+    private var joinURL: URL? {
+        guard let url = event.meetingURL, let host = url.host?.lowercased() else { return nil }
+        let meetingHosts = [
+            "zoom.us", "zoom.com", "meet.google.com", "teams.microsoft.com", "teams.live.com",
+            "webex.com", "gotomeeting.com", "whereby.com", "chime.aws", "bluejeans.com", "facetime.apple.com"
+        ]
+        return meetingHosts.contains { host == $0 || host.hasSuffix(".\($0)") } ? url : nil
+    }
+
+    /// A physical place, not a meeting link, that Maps can search for.
+    private var mapsURL: URL? {
+        guard let location = event.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !location.isEmpty, !location.contains("://"),
+              let query = location.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        return URL(string: "https://maps.apple.com/?q=\(query)")
+    }
+}
+
+/// Where an event sits relative to now, for the Up next row.
+private struct EventTiming {
+    var isLive = false
+    /// Set only in the hour before the event starts.
+    var minutesUntilStart: Int?
+
+    init(event: CalendarEvent, now: Date) {
+        guard !event.isAllDay else { return }
+        let end = event.end ?? event.start.addingTimeInterval(30 * 60)
+        isLive = event.start <= now && now < end
+        let untilStart = event.start.timeIntervalSince(now)
+        if untilStart > 0, untilStart <= 60 * 60 {
+            minutesUntilStart = max(1, Int((untilStart / 60).rounded(.up)))
+        }
+    }
+
+    var label: String? {
+        if isLive { return "Happening now" }
+        return minutesUntilStart.map { "Starts in \($0) min" }
+    }
+
+    /// Join shows from 15 minutes before the start until the end.
+    var canJoin: Bool { isLive || (minutesUntilStart ?? .max) <= 15 }
 }
 
 private struct CalendarTimelineView: View {
@@ -737,18 +836,37 @@ private struct CalendarTimelineView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                if case let .loaded(events) = app.calendarState {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
-                            CalendarHomeRow(
-                                event: event,
-                                isInToDo: tasks.tasks.contains { $0.relatedCalendarEventID == event.id },
-                                onAddToDo: { app.addCalendarEventToTasks(event) }
-                            )
-                            if index < events.count - 1 { Divider().overlay(AppTheme.separator) }
+                if case let .loaded(events) = app.calendarState, !events.isEmpty {
+                    LazyVStack(alignment: .leading, spacing: AppTheme.Spacing.lg, pinnedViews: .sectionHeaders) {
+                        ForEach(days(in: events)) { group in
+                            Section {
+                                VStack(spacing: 0) {
+                                    ForEach(Array(group.events.enumerated()), id: \.element.id) { index, event in
+                                        CalendarHomeRow(
+                                            event: event,
+                                            isInToDo: tasks.tasks.contains { $0.relatedCalendarEventID == event.id },
+                                            showsDate: false,
+                                            onAddToDo: { app.addCalendarEventToTasks(event) }
+                                        )
+                                        if index < group.events.count - 1 {
+                                            Divider().overlay(AppTheme.separator)
+                                        }
+                                    }
+                                }
+                                .cardSurface(padding: 0)
+                            } header: {
+                                dayHeader(group.day, count: group.events.count)
+                            }
                         }
                     }
-                    .padding(.horizontal, AppTheme.Spacing.lg)
+                    .padding(.horizontal, AppTheme.Spacing.page)
+                    .padding(.bottom, AppTheme.Spacing.xxl)
+                } else {
+                    InfoStateView(
+                        systemImage: "calendar",
+                        title: "No upcoming events",
+                        message: "Your connected calendars are clear for the next 14 days."
+                    )
                 }
             }
             .background(AppTheme.background)
@@ -758,6 +876,43 @@ private struct CalendarTimelineView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
+        .presentationBackground(AppTheme.background)
+    }
+
+    private struct DayGroup: Identifiable {
+        let day: Date
+        let events: [CalendarEvent]
+        var id: Date { day }
+    }
+
+    /// Events keep their timeline order within each day.
+    private func days(in events: [CalendarEvent]) -> [DayGroup] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: events) { calendar.startOfDay(for: $0.start) }
+        return grouped.keys.sorted().map { DayGroup(day: $0, events: grouped[$0] ?? []) }
+    }
+
+    private func dayHeader(_ day: Date, count: Int) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(dayTitle(day))
+                .font(.headline)
+                .foregroundStyle(AppTheme.primaryText)
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            Text("\(count) event\(count == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(AppTheme.tertiaryText)
+        }
+        .padding(.top, AppTheme.Spacing.md)
+        .padding(.bottom, AppTheme.Spacing.xs)
+        .background(AppTheme.background)
+    }
+
+    private func dayTitle(_ day: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInTomorrow(day) { return "Tomorrow" }
+        return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
     }
 }
 

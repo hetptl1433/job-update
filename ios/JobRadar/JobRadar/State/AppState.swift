@@ -78,6 +78,13 @@ final class AppState: ObservableObject {
     var outlookAccounts: [EmailAccount] { emailAccounts.filter { $0.provider == .outlook } }
     @Published private(set) var connections = ConnectionStatus()
     @Published var alert: AppAlert?
+    /// Where typed Orbit Chat runs. On-device is the default, so chat works
+    /// without an OpenAI key and never sends the conversation off the iPhone.
+    @Published var assistantEngine: AssistantEngine {
+        didSet {
+            UserDefaults.standard.set(assistantEngine.rawValue, forKey: AppConfig.assistantEnginePreferenceKey)
+        }
+    }
 
     // Email → AI → dashboard pipeline
     @Published private(set) var detectedJobUpdates: [DetectedJobUpdate] = []
@@ -88,6 +95,10 @@ final class AppState: ObservableObject {
     @Published private(set) var calendarState: LoadState<[CalendarEvent]> = .disconnected
     private var emailScanGeneration = 0
     private var isBootstrapping = false
+    /// Launch and Home appearing both refresh calendars. Within this window
+    /// they share one read instead of refetching every provider.
+    private var lastCalendarRefreshAt: Date?
+    private static let automaticRefreshInterval: TimeInterval = 120
 
     // Service layer
     let auth: AuthenticationManager
@@ -97,7 +108,9 @@ final class AppState: ObservableObject {
     let tasks: TaskRepository
     let calendar: CalendarRepository
     let finance: FinanceRepository
-    let assistant: AssistantService
+    let localModel: LocalModelManager
+    private let onDeviceAssistant: AssistantService
+    private let cloudAssistant: AssistantService
     let assistantMemory: AssistantMemoryRepository
     let emailScanHistory: EmailScanHistoryStore
     let health: HealthRepository
@@ -130,7 +143,13 @@ final class AppState: ObservableObject {
         self.tasks = TaskRepository()
         self.calendar = CalendarRepository()
         self.finance = FinanceRepository(api: financeAPI, auth: auth)
-        self.assistant = LiveAssistantService()
+        let localModel = LocalModelManager()
+        self.localModel = localModel
+        self.onDeviceAssistant = LocalAssistantService(model: localModel)
+        self.cloudAssistant = LiveAssistantService()
+        self.assistantEngine = AssistantEngine(
+            rawValue: UserDefaults.standard.string(forKey: AppConfig.assistantEnginePreferenceKey) ?? ""
+        ) ?? .onDevice
         self.assistantMemory = AssistantMemoryRepository()
         self.emailScanHistory = EmailScanHistoryStore()
         self.health = HealthRepository()
@@ -167,15 +186,33 @@ final class AppState: ObservableObject {
         isBootstrapping = true
         defer { isBootstrapping = false }
         loadPersistedState()
-        if let session = await auth.restoreSession() {
+        // The saved profile is enough to open Orbit. Refreshing it with Google
+        // is a network round trip, longer on a weak connection, so it finishes
+        // behind the main screen. Google API calls refresh their own tokens.
+        let cached = UserSession.restore()
+        var restored = cached
+        if restored == nil { restored = await auth.restoreSession() }
+        if let session = restored {
             apply(session)
             phase = isSetupComplete ? .authenticated : .needsSetup
-            if connections.calendarConnected { await refreshCalendar(presentErrors: false) }
-            if connections.healthConnected { await health.refresh() }
+            await refreshCalendarIfStale()
+            await refreshHealthIfStale()
+            // Google Calendar has usually refreshed the token by now, so this
+            // rarely needs another network request.
+            if let cached { await refreshRestoredSession(from: cached) }
         } else {
             phase = .signedOut
         }
         consumePendingLaunchRequest()
+    }
+
+    /// Applies Google's refreshed profile and scopes when they differ from the
+    /// saved ones Orbit opened with.
+    private func refreshRestoredSession(from cached: UserSession) async {
+        guard let session = await auth.restoreSession(),
+              session != cached,
+              session.userID == user?.userID else { return }
+        apply(session)
     }
 
     /// A cached profile is the same local fallback `restoreSession()` already
@@ -220,6 +257,20 @@ final class AppState: ObservableObject {
     func openAssistant(prompt: String? = nil) {
         assistantInitialPrompt = prompt
         assistantLaunch = .chat
+    }
+
+    /// The service answering typed Orbit Chat.
+    var assistant: AssistantService {
+        assistantEngine == .onDevice ? onDeviceAssistant : cloudAssistant
+    }
+
+    /// Whether typed Orbit Chat can answer with the selected engine. Views
+    /// that depend on the on-device model also observe `localModel`.
+    var isAssistantChatReady: Bool {
+        switch assistantEngine {
+        case .onDevice: localModel.isReady
+        case .openAI: connections.aiConnected
+        }
     }
 
     // MARK: Authentication (single identity)
@@ -466,6 +517,7 @@ final class AppState: ObservableObject {
             calendarState = .disconnected
             return
         }
+        lastCalendarRefreshAt = .now
         let previousState: LoadState<[CalendarEvent]>
         if case .failed = calendarState { previousState = .empty }
         else { previousState = calendarState }
@@ -478,7 +530,7 @@ final class AppState: ObservableObject {
 
         if providers.contains(.apple) {
             do {
-                _ = try await appleCalendarAPI.upcomingEvents()
+                try appleCalendarAPI.requireFullAccess()
                 tasks.reconcileWithAppleCalendar()
                 calendar.setEvents(try await appleCalendarAPI.upcomingEvents(), for: .apple)
                 succeeded += 1
@@ -896,6 +948,37 @@ final class AppState: ObservableObject {
         if connections.healthConnected { await health.refresh() }
     }
 
+    /// Home refreshes its sources each time it appears. They load side by side,
+    /// and any refreshed in the last couple of minutes, by launch or before a
+    /// quick trip to another tab, is reused. Pull to refresh reloads everything.
+    func refreshHomeIfStale() async {
+        async let jobsRefresh = jobs.refreshIfStale()
+        async let calendarRefresh: Void = refreshCalendarIfStale()
+        async let healthRefresh: Void = refreshHealthIfStale()
+        async let financeRefresh: Void = refreshFinanceIfConfigured()
+        _ = await (jobsRefresh, calendarRefresh, healthRefresh, financeRefresh)
+    }
+
+    func refreshCalendarIfStale() async {
+        guard connections.calendarConnected else { return }
+        if let lastCalendarRefreshAt,
+           Date.now.timeIntervalSince(lastCalendarRefreshAt) < Self.automaticRefreshInterval {
+            return
+        }
+        await refreshCalendar(presentErrors: false)
+    }
+
+    private func refreshHealthIfStale() async {
+        guard connections.healthConnected else { return }
+        await health.refreshIfStale()
+    }
+
+    /// Finance applies its own two-minute window to automatic loads.
+    private func refreshFinanceIfConfigured() async {
+        guard finance.isBackendConfigured else { return }
+        await finance.load(showLoading: false)
+    }
+
     func refreshJobs() async {
         _ = await jobs.refresh()
         inbox.clearTransientFailure()
@@ -1003,6 +1086,25 @@ final class AppState: ObservableObject {
         ))
     }
 
+    /// Adds an Inbox message to To Do when the user asks. It stays undated
+    /// until they schedule it, and it settles any suggestion for that message.
+    func addEmailToTasks(_ message: InboxMessage) {
+        guard !tasks.tasks.contains(where: { $0.relatedEmailID == message.id }) else { return }
+        let subject = message.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard tasks.add(TaskItem(
+            title: subject.isEmpty ? "Respond: \(message.sender)" : subject,
+            notes: [message.sender, message.aiSummary].filter { !$0.isEmpty }.joined(separator: " · "),
+            priority: message.importance == .high ? .high : .normal,
+            source: .email,
+            relatedEmailID: message.id
+        )) else {
+            alert = AppAlert(title: "Couldn't save To Do", message: "Orbit couldn't add this email to To Do. Try again.")
+            return
+        }
+        emailScanHistory.recordTaskDecision(.accepted, sourceMessageID: message.id)
+        rebuildTaskSuggestions()
+    }
+
     // MARK: Setup completion
 
     var isSetupComplete: Bool { UserDefaults.standard.bool(forKey: Keys.setupComplete) }
@@ -1043,6 +1145,26 @@ final class AppState: ObservableObject {
             selectedTab = .finance
             financePath = requestedPath
             Task { await finance.resumeHostedLinkIfNeeded() }
+            return true
+        }
+        if url.scheme == "orbit", url.host == "home" {
+            selectedTab = .home
+            return true
+        }
+        if url.scheme == "orbit", url.host == "health" {
+            selectedTab = .health
+            return true
+        }
+        if url.scheme == "orbit", url.host == "jobs" {
+            selectedTab = .jobs
+            return true
+        }
+        if url.scheme == "orbit", url.host == "inbox" {
+            selectedTab = .inbox
+            return true
+        }
+        if url.scheme == "orbit", url.host == "more" {
+            selectedTab = .more
             return true
         }
         if url.scheme == "orbit", url.host == "tasks" {
@@ -1190,6 +1312,7 @@ final class AppState: ObservableObject {
         calendar.disconnectAll()
         tasks.setAppleCalendarSyncEnabled(false)
         calendarState = .disconnected
+        lastCalendarRefreshAt = nil
         health.disconnect()
         finance.clear()
         AssistantConversationStore.clear()

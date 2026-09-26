@@ -554,18 +554,18 @@ private struct LiveVoiceBackdrop: View {
 
     private var glow: Color {
         switch phase {
-        case .speaking: Color(hex: 0x7769FF)
-        case .hearing: Color(hex: 0x37B8A7)
+        case .speaking: AppTheme.coral
+        case .hearing: AppTheme.accent
         case .failed: Color(hex: 0xD65364)
         case .muted: Color(hex: 0x6B7180)
-        default: Color(hex: 0x4265D6)
+        default: AppTheme.accent
         }
     }
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                Color(hex: 0x050607)
+                AppTheme.background
 
                 Circle()
                     .fill(glow.opacity(0.1))
@@ -574,7 +574,7 @@ private struct LiveVoiceBackdrop: View {
                     .offset(x: -150, y: -250)
 
                 Circle()
-                    .fill(Color(hex: 0x73839D).opacity(0.07))
+                    .fill(AppTheme.coral.opacity(0.05))
                     .frame(width: 360, height: 360)
                     .blur(radius: 130)
                     .offset(x: 170, y: 280)
@@ -669,15 +669,15 @@ private struct OrbitVoiceOrb: View {
     private var colors: [Color] {
         switch phase {
         case .hearing:
-            [Color(hex: 0xB4D8D0), Color(hex: 0x729B96), Color(hex: 0x40575E)]
+            [Color(hex: 0xFF8D9A), Color(hex: 0xF3263E), Color(hex: 0x7C132C)]
         case .speaking:
-            [Color(hex: 0xCAC5DD), Color(hex: 0x8C88A7), Color(hex: 0x4D526C)]
+            [Color(hex: 0xFFD0D5), Color(hex: 0xFF354B), Color(hex: 0x8D102B)]
         case .failed:
             [Color(hex: 0xD6AFB3), Color(hex: 0x96646C), Color(hex: 0x593D49)]
         case .muted:
             [Color(hex: 0xB7BBC2), Color(hex: 0x737985), Color(hex: 0x414650)]
         default:
-            [Color(hex: 0xC0CCDC), Color(hex: 0x8393AA), Color(hex: 0x46546A)]
+            [Color(hex: 0xFF8D9A), Color(hex: 0xF3263E), Color(hex: 0x6E0D24)]
         }
     }
 

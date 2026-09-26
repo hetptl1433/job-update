@@ -55,6 +55,8 @@ enum AppTheme {
 
     static let brand = accent
     static let brandSecondary = Color(hex: 0xB81029)
+    /// Deeper brand endpoint keeps white button labels legible.
+    static let primaryButton = Color(hex: 0xD4142C)
     static let coral = Color(hex: 0xFF6675)
     static let onBrand = onAccent
     static let brandGradient = LinearGradient(
@@ -78,19 +80,20 @@ enum AppTheme {
         static let lg: CGFloat = 16
         static let xl: CGFloat = 24
         static let xxl: CGFloat = 32
+        static let page: CGFloat = 22
     }
 
     // Refined corner radii: soft enough to feel polished, never bubbly.
     enum Radius {
         static let sm: CGFloat = 10
         static let md: CGFloat = 14
-        static let lg: CGFloat = 20
+        static let lg: CGFloat = 22
     }
 
     enum Shadow {
-        static let cardColor = Color.black.opacity(0.42)
-        static let cardRadius: CGFloat = 16
-        static let cardY: CGFloat = 8
+        static let cardColor = Color.black.opacity(0.12)
+        static let cardRadius: CGFloat = 6
+        static let cardY: CGFloat = 3
         static let buttonColor = brand.opacity(0.28)
     }
 }
@@ -98,15 +101,15 @@ enum AppTheme {
 // MARK: - Reusable styling
 
 extension View {
-    /// A premium dark surface with a crisp edge and restrained depth.
+    /// Quiet grouped surface shared by the refined screens and their details.
     func cardSurface(padding: CGFloat = AppTheme.Spacing.lg,
-                     radius: CGFloat = AppTheme.Radius.md) -> some View {
+                     radius: CGFloat = AppTheme.Radius.lg) -> some View {
         self
             .padding(padding)
             .background(AppTheme.primarySurface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(AppTheme.border, lineWidth: 1)
+                    .strokeBorder(AppTheme.separator, lineWidth: 1)
             )
             .shadow(
                 color: AppTheme.Shadow.cardColor,
@@ -116,13 +119,69 @@ extension View {
             )
     }
 
+    func orbitFocusSurface(padding: CGFloat = AppTheme.Spacing.xl) -> some View {
+        self
+            .padding(padding)
+            .background(
+                LinearGradient(
+                    colors: [Color(hex: 0x1B1417), AppTheme.primarySurface],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+                    .strokeBorder(AppTheme.coral.opacity(0.18), lineWidth: 1)
+            }
+    }
+
+    /// For a row inside `cardSurface(padding: 0)`: gives its touch-and-hold
+    /// preview the card's fill and corners. In place it looks unchanged, since
+    /// the card behind it is the same color and shape.
+    func cardRowPreviewSurface() -> some View {
+        let shape = RoundedRectangle(cornerRadius: AppTheme.Radius.lg, style: .continuous)
+        return self
+            .background(AppTheme.primarySurface, in: shape)
+            .contentShape(.contextMenuPreview, shape)
+    }
+
+    /// Fades a screen section in and lifts it into place the first time it
+    /// appears, `order` steps after the first so sections arrive in sequence.
+    /// Reduce Motion shows sections immediately.
+    func orbitAppear(_ order: Int) -> some View {
+        modifier(OrbitAppearModifier(order: order))
+    }
+
     /// Small uppercase section label used above grouped content.
     func sectionLabel() -> some View {
         self
             .font(.caption.weight(.semibold))
-            .tracking(0.6)
-            .foregroundStyle(AppTheme.secondaryText)
+            .tracking(1.1)
+            .foregroundStyle(AppTheme.tertiaryText)
             .textCase(.uppercase)
+    }
+}
+
+private struct OrbitAppearModifier: ViewModifier {
+    let order: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isVisible = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible || reduceMotion ? 1 : 0)
+            .offset(y: isVisible || reduceMotion ? 0 : 12)
+            .onAppear {
+                guard !isVisible else { return }
+                guard !reduceMotion else {
+                    isVisible = true
+                    return
+                }
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.86).delay(Double(min(order, 8)) * 0.04)) {
+                    isVisible = true
+                }
+            }
     }
 }
 
@@ -137,20 +196,36 @@ struct PrimaryButtonStyle: ButtonStyle {
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.vertical, 14)
             .padding(.horizontal, 20)
-            .background(AppTheme.brandGradient, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
+            .background(AppTheme.primaryButton, in: RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.Radius.md, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
             )
             .shadow(
                 color: configuration.isPressed ? .clear : AppTheme.Shadow.buttonColor,
-                radius: configuration.isPressed ? 4 : 12,
+                radius: configuration.isPressed ? 2 : 5,
                 x: 0,
-                y: configuration.isPressed ? 2 : 7
+                y: configuration.isPressed ? 1 : 3
             )
             .scaleEffect(configuration.isPressed ? 0.975 : 1)
             .opacity(configuration.isPressed ? 0.9 : 1)
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+    }
+}
+
+/// Gives a tappable card a soft press: it settles slightly and dims, then
+/// springs back. Reduce Motion keeps only the dimming.
+struct OrbitPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .animation(
+                reduceMotion ? .easeOut(duration: 0.1) : .spring(response: 0.28, dampingFraction: 0.72),
+                value: configuration.isPressed
+            )
     }
 }
 

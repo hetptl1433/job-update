@@ -182,10 +182,20 @@ final class TaskRepository: ObservableObject {
     func reconcileWithAppleCalendar() {
         guard calendarSyncEnabled else { return }
         do {
-            tasks = try appleCalendar.mergeLinkedTaskChanges(into: tasks)
-            persist()
+            // This runs on every calendar refresh, and usually nothing was
+            // edited in Calendar. Only save, reload widgets, and reschedule
+            // alerts for To Dos that Calendar actually changed.
+            let merged = try appleCalendar.mergeLinkedTaskChanges(into: tasks)
+            let previous = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let changed = merged.filter { previous[$0.id] != $0 }
+            if !changed.isEmpty {
+                tasks = merged
+                persist()
+            }
             for task in tasks where !task.isCompleted {
                 synchronizeToApple(task.id)
+            }
+            for task in changed {
                 Task { await TaskAlertScheduler.shared.synchronize(task: task) }
             }
             calendarSyncError = nil

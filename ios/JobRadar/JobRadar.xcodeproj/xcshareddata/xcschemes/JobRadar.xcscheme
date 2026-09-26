@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "2660"
+   LastUpgradeVersion = "1430"
    version = "1.3">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -17,6 +17,20 @@
                BlueprintIdentifier = "9005D2F93B3B99CC91A0E2B1"
                BuildableName = "Orbit.app"
                BlueprintName = "JobRadar"
+               ReferencedContainer = "container:JobRadar.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "657BE4EA1F39722E5231747B"
+               BuildableName = "OrbitScreenBroadcast.appex"
+               BlueprintName = "OrbitScreenBroadcast"
                ReferencedContainer = "container:JobRadar.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>

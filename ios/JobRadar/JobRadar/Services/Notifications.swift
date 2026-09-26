@@ -71,6 +71,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         center.removePendingNotificationRequests(withIdentifiers: ["orbit-reminder-\(id.uuidString)"])
     }
 
+    func cancelJobReminder(applicationID: Int) {
+        center.removePendingNotificationRequests(withIdentifiers: ["job-reminder-\(applicationID)"])
+    }
+
     func cancelTaskAlert(id: UUID) {
         center.removePendingNotificationRequests(withIdentifiers: ["orbit-task-\(id.uuidString)"])
     }

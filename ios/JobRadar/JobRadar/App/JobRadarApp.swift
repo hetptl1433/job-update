@@ -45,6 +45,7 @@ struct JobRadarApp: App {
                 }
         }
         .modelContainer(modelContainer)
+        .commands { OrbitCommands() }
     }
 
     /// Build the SwiftData container. The store is a re-syncable cache, so if a

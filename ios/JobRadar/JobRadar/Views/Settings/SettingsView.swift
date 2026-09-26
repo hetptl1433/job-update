@@ -1,5 +1,7 @@
 import AppIntents
+import ReplayKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system, light, dark
@@ -29,6 +31,13 @@ struct SettingsView: View {
     @State private var adminPassword = ""
     @State private var showDisconnectConfirm = false
     @State private var showChatGPTSheet = false
+    @ObservedObject private var carPlayVideos = OrbitCarPlayVideoLibrary.shared
+    @State private var showCarPlayVideoImporter = false
+    @State private var carPlayVideoURL = ""
+    @State private var carPlayVideoError = ""
+    @State private var showCarPlayVideoError = false
+    /// False beside the iPad sidebar, where Settings isn't a sheet.
+    var showsDoneButton = true
 
     var body: some View {
         NavigationStack {
@@ -36,6 +45,11 @@ struct SettingsView: View {
                 accountSection
                 emailSection
                 servicesSection
+                if !DeviceProfile.isPad {
+                    carPlaySection
+                    carPlayVideoSection
+                }
+                chatSection
                 aiSection
                 siriSection
                 notificationsSection
@@ -48,9 +62,25 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                if showsDoneButton {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                }
             }
             .sheet(isPresented: $showChatGPTSheet) { ConnectChatGPTView().environmentObject(app) }
+            .fileImporter(isPresented: $showCarPlayVideoImporter, allowedContentTypes: [.movie]) { result in
+                do {
+                    try carPlayVideos.addFile(result.get())
+                } catch let error as CocoaError where error.code == .userCancelled {
+                    // Closing Files without choosing a video is not an error.
+                } catch {
+                    showVideoError(error)
+                }
+            }
+            .alert("CarPlay Videos", isPresented: $showCarPlayVideoError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(carPlayVideoError)
+            }
             .onAppear {
                 adminPassword = KeychainStore.get(KeychainKeys.adminPassword) ?? ""
                 if selectedTextModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -66,7 +96,7 @@ struct SettingsView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This removes connected accounts and local credentials from this iPhone, then signs you out of \(AppConfig.appName).")
+                Text("This removes connected accounts and local credentials from this \(DeviceProfile.name), then signs you out of \(AppConfig.appName).")
             }
         }
     }
@@ -154,7 +184,7 @@ struct SettingsView: View {
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
             serviceRow("Apple Health", systemImage: "heart", connected: app.connections.healthConnected,
                        connect: { await app.connectHealth() }, disconnect: { app.disconnectHealth() })
-            Text("On your iPhone, approve the Health categories you want Orbit to read. Orbit never writes health data.")
+            Text("On your \(DeviceProfile.name), approve the Health categories you want Orbit to read. Orbit never writes health data.")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
         }
     }
@@ -182,6 +212,114 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: CarPlay screen mirror
+
+    private var carPlaySection: some View {
+        Section {
+            HStack(spacing: AppTheme.Spacing.md) {
+                Label("Screen broadcast", systemImage: "rectangle.on.rectangle")
+                    .foregroundStyle(AppTheme.primaryText)
+                Spacer()
+                OrbitScreenBroadcastPicker()
+                    .frame(width: 44, height: 44)
+                    .accessibilityLabel("Start or stop Orbit Screen Broadcast")
+            }
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                LabeledContent("Status", value: mirrorStatus)
+                    .font(.caption)
+            }
+        } header: {
+            Text("CarPlay Screen Mirror")
+        } footer: {
+            Text("Connect CarPlay, tap the broadcast button and choose Orbit Screen Broadcast. Then open Orbit Video on the car display and choose Mirror iPhone Screen. The image fills the car display without stretching; portrait screens are cropped at the top and bottom. iOS requires screen-capture approval. Protected video may appear black.")
+        }
+    }
+
+    private var mirrorStatus: String {
+        if OrbitMirrorShared.isBroadcastPaused { return "Paused" }
+        if OrbitMirrorShared.isBroadcastActive { return "Broadcasting" }
+        return "Off"
+    }
+
+    private var carPlayVideoSection: some View {
+        Section {
+            Button {
+                showCarPlayVideoImporter = true
+            } label: {
+                Label("Import video from Files", systemImage: "square.and.arrow.down")
+            }
+
+            TextField("HTTPS HLS/MP4 or local HTTP URL", text: $carPlayVideoURL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Save video link") {
+                do {
+                    try carPlayVideos.addStream(carPlayVideoURL)
+                    carPlayVideoURL = ""
+                } catch {
+                    showVideoError(error)
+                }
+            }
+            .disabled(carPlayVideoURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            ForEach(carPlayVideos.videos) { video in
+                HStack(spacing: AppTheme.Spacing.md) {
+                    Image(systemName: video.isImportedFile ? "film" : "link")
+                        .foregroundStyle(AppTheme.secondaryText)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(video.title).lineLimit(1)
+                        Text(video.isImportedFile ? "On this iPhone" : (video.playbackURL.host ?? "Video link"))
+                            .font(.caption)
+                            .foregroundStyle(AppTheme.secondaryText)
+                    }
+                    Spacer()
+                    Button(role: .destructive) {
+                        carPlayVideos.remove(video)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove \(video.title)")
+                }
+            }
+            if let error = carPlayVideos.lastError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.destructive)
+            }
+        } header: {
+            Text("CarPlay Videos")
+        } footer: {
+            Text("Choose an imported video or direct media link in Orbit Video on CarPlay. Landscape videos fill the car display when CarPlay video is available; webpage links will not play.")
+        }
+    }
+
+    private func showVideoError(_ error: Error) {
+        carPlayVideoError = error.localizedDescription
+        showCarPlayVideoError = true
+    }
+
+    // MARK: Orbit Chat
+
+    private var chatSection: some View {
+        Section {
+            NavigationLink {
+                ChatModelSettingsView()
+            } label: {
+                LabeledContent("Model") {
+                    ChatModelSummary(localModel: app.localModel)
+                }
+            }
+        } header: {
+            Text("Orbit Chat")
+        } footer: {
+            Text(app.assistantEngine == .onDevice
+                ? "Typed chat runs on this \(DeviceProfile.name) with an open model. Your questions and Orbit data never leave the device, and chat works offline. Live voice still uses OpenAI."
+                : "Typed chat uses your OpenAI key. Choose its model and how long it thinks here or from the chat.")
+        }
+    }
+
     // MARK: AI
 
     private var aiSection: some View {
@@ -201,7 +339,7 @@ struct SettingsView: View {
                         .font(.caption.weight(.semibold))
                 }
             }
-            Picker("Assistant & email model", selection: $selectedTextModel) {
+            Picker("Email scanning model", selection: $selectedTextModel) {
                 ForEach(AppConfig.textModelChoices(including: selectedTextModel)) { choice in
                     Text(choice.name + (choice.isRecommended ? " · Recommended" : ""))
                         .tag(choice.id)
@@ -222,15 +360,15 @@ struct SettingsView: View {
             Toggle(isOn: $shareHealthWithAssistant) {
                 Label("Share Health summaries with Orbit AI", systemImage: "heart.text.square")
             }
-            Text("Off by default. When enabled, Orbit may send derived health summaries and trends—not raw HealthKit samples—to your configured OpenAI account when you ask about Health.")
+            Text("Off by default. When enabled, Orbit Chat can use derived health summaries and trends—not raw HealthKit samples—when you ask about Health. On-device chat keeps them on this \(DeviceProfile.name); OpenAI chat and live voice send them to your OpenAI account.")
                 .font(.caption)
                 .foregroundStyle(AppTheme.secondaryText)
             AssistantMemorySettingsSummary(memory: app.assistantMemory)
             Text("Personal development mode. The key is validated, stored in Keychain, and never logged. Use a backend-held key before distributing the app.")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
-            Text("The assistant and email scanner share the selected text model. Live voice changes apply the next time you start a session. Model availability and API charges depend on your OpenAI project.")
+            Text("The email scanner uses the selected text model. Orbit Chat has its own model choice, which starts out the same. Live voice changes apply the next time you start a session. Model availability and API charges depend on your OpenAI project.")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
-            Text("Personal Memory is stored on this iPhone. Orbit saves explicit requests immediately; optional chat suggestions require your approval. It is context—not training—and can be reviewed or deleted anytime.")
+            Text("Personal Memory is stored on this \(DeviceProfile.name). Orbit saves explicit requests immediately; optional chat suggestions require your approval. It is context—not training—and can be reviewed or deleted anytime.")
                 .font(.caption).foregroundStyle(AppTheme.secondaryText)
         }
     }
@@ -301,7 +439,7 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(AppTheme.secondaryText)
             } else {
                 Label("Local-only tracker", systemImage: "iphone")
-                Text("Jobs are saved on this iPhone. Add a valid APIBaseURL in project.yml only when your tracker backend is deployed.")
+                Text("Jobs are saved on this \(DeviceProfile.name). Add a valid APIBaseURL in project.yml only when your tracker backend is deployed.")
                     .font(.caption).foregroundStyle(AppTheme.secondaryText)
             }
         }
@@ -334,6 +472,20 @@ struct SettingsView: View {
             Button("Sign Out") { app.signOut(); dismiss() }
             Button("Disconnect Account", role: .destructive) { showDisconnectConfirm = true }
         }
+    }
+}
+
+private struct OrbitScreenBroadcastPicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> RPSystemBroadcastPickerView {
+        let picker = RPSystemBroadcastPickerView(frame: .zero)
+        picker.preferredExtension = OrbitMirrorShared.broadcastExtensionIdentifier
+        picker.showsMicrophoneButton = false
+        return picker
+    }
+
+    func updateUIView(_ uiView: RPSystemBroadcastPickerView, context: Context) {
+        uiView.preferredExtension = OrbitMirrorShared.broadcastExtensionIdentifier
+        uiView.showsMicrophoneButton = false
     }
 }
 
@@ -453,7 +605,7 @@ private struct AssistantMemorySettingsContent: View {
             }
 
             Section("Privacy") {
-                Text("Orbit stores these entries in an owner-scoped, Data-Protected file on this iPhone. Raw email and chat transcripts are not copied into Personal Memory. Orbit blocks common password, key, PIN, and long identity or financial-number patterns.")
+                Text("Orbit stores these entries in an owner-scoped, Data-Protected file on this \(DeviceProfile.name). Raw email and chat transcripts are not copied into Personal Memory. Orbit blocks common password, key, PIN, and long identity or financial-number patterns.")
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
             }

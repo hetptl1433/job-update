@@ -27,6 +27,7 @@ jobs:
             -scheme JobRadar \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee build.log
       - name: Upload Xcode build log

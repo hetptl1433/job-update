@@ -4,9 +4,10 @@ import Foundation
 
 /// The AI intelligence layer as seen by the app.
 ///
-/// In the personal-development build, the user can connect an OpenAI API key.
-/// The assistant receives compact summaries rather than raw provider messages. The service
-/// protocol keeps a future backend-brokered implementation UI-compatible.
+/// Orbit Chat answers either with a model running on the iPhone or with the
+/// user's own OpenAI key. The assistant receives compact summaries rather than
+/// raw provider messages. The service protocol keeps a future backend-brokered
+/// implementation UI-compatible.
 protocol AssistantService {
     var isConnected: Bool { get }
     func answer(
@@ -14,6 +15,69 @@ protocol AssistantService {
         context: AssistantContext,
         history: [ChatMessage]
     ) async throws -> String
+
+    /// Streams the reply as progressively longer snapshots.
+    @MainActor
+    func streamAnswer(
+        _ prompt: String,
+        context: AssistantContext,
+        history: [ChatMessage]
+    ) -> AsyncThrowingStream<AssistantReplySnapshot, Error>
+}
+
+extension AssistantService {
+    /// Services without streaming deliver the complete reply as one snapshot.
+    @MainActor
+    func streamAnswer(
+        _ prompt: String,
+        context: AssistantContext,
+        history: [ChatMessage]
+    ) -> AsyncThrowingStream<AssistantReplySnapshot, Error> {
+        let (stream, continuation) = AsyncThrowingStream<AssistantReplySnapshot, Error>.makeStream()
+        let task = Task {
+            do {
+                let reply = try await answer(prompt, context: context, history: history)
+                continuation.yield(AssistantReplySnapshot(text: reply))
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { _ in task.cancel() }
+        return stream
+    }
+}
+
+/// Where typed Orbit Chat runs. Live voice always uses OpenAI Realtime.
+enum AssistantEngine: String, CaseIterable, Identifiable {
+    case onDevice
+    case openAI
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .onDevice: "On this \(DeviceProfile.name)"
+        case .openAI: "OpenAI"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .onDevice: "lock.fill"
+        case .openAI: "cloud.fill"
+        }
+    }
+}
+
+/// A streaming reply so far.
+struct AssistantReplySnapshot: Equatable, Sendable {
+    var text: String
+    /// What an on-device model thought before answering. It's shown collapsed
+    /// and never sent back to a model.
+    var reasoning: String?
+    /// Whether the model is still thinking.
+    var isThinking = false
 }
 
 /// Compact, already-summarized context handed to the model.
@@ -45,7 +109,9 @@ struct LiveAssistantService: AssistantService {
         guard let key = KeychainStore.get(KeychainKeys.openAIKey), !key.isEmpty else {
             throw APIError.notConfigured("Connect OpenAI processing in Settings to use the assistant.")
         }
-        let client = OpenAIClient(apiKey: key, model: AppConfig.openAIModel)
+        let model = AppConfig.openAIChatModel
+        let thinking = ChatPreferences.openAIThinking()
+        let client = OpenAIClient(apiKey: key, model: model)
         return try await client.complete(
             system: AssistantPrompt.system,
             user: AssistantPrompt.conversationInput(
@@ -53,8 +119,50 @@ struct LiveAssistantService: AssistantService {
                 history: history,
                 context: context
             ),
-            reasoningEffort: .medium
+            maxOutputTokens: thinking.maxOutputTokens(
+                reasons: !OpenAIClient.reasoningEfforts(forModel: model).isEmpty
+            ),
+            reasoningEffort: thinking.reasoningEffort,
+            timeout: thinking.requestTimeout
         )
+    }
+}
+
+/// Orbit Chat answered by an open-weights model running on this iPhone. The
+/// prompt, Orbit data and reply never leave the device.
+struct LocalAssistantService: AssistantService {
+    let model: LocalModelManager
+
+    var isConnected: Bool {
+        LocalModelOption.selected().map(LocalModelStorage.isDownloaded) ?? false
+    }
+
+    func answer(
+        _ prompt: String,
+        context: AssistantContext,
+        history: [ChatMessage]
+    ) async throws -> String {
+        var reply = ""
+        for try await snapshot in await streamAnswer(prompt, context: context, history: history) {
+            reply = snapshot.text
+        }
+        return reply
+    }
+
+    @MainActor
+    func streamAnswer(
+        _ prompt: String,
+        context: AssistantContext,
+        history: [ChatMessage]
+    ) -> AsyncThrowingStream<AssistantReplySnapshot, Error> {
+        model.streamReply(thinking: ChatPreferences.onDeviceThinking() == .thinking) { dataCharacterBudget in
+            LocalAssistantPrompt.request(
+                question: prompt,
+                context: context,
+                history: history,
+                dataCharacterBudget: dataCharacterBudget
+            )
+        }
     }
 }
 
@@ -179,12 +287,29 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var role: Role
     var text: String
     var createdAt: Date
+    /// Replies only: the thinking an on-device model did first. Never sent
+    /// back to a model.
+    var reasoning: String?
+    var thinkingSeconds: Double?
+    /// Replies only: which model answered and how, e.g. "Qwen3 1.7B · 6s".
+    var detail: String?
 
-    init(id: UUID = UUID(), role: Role, text: String, createdAt: Date = .now) {
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        text: String,
+        createdAt: Date = .now,
+        reasoning: String? = nil,
+        thinkingSeconds: Double? = nil,
+        detail: String? = nil
+    ) {
         self.id = id
         self.role = role
         self.text = text
         self.createdAt = createdAt
+        self.reasoning = reasoning
+        self.thinkingSeconds = thinkingSeconds
+        self.detail = detail
     }
 }
 

@@ -1,4 +1,4 @@
-# Orbit for iPhone
+# Orbit for iPhone and iPad
 
 Orbit is a native SwiftUI command center for provider-neutral email, calendars,
 tasks, and job tracking. It combines Gmail and Microsoft 365 mail, Apple/Google/
@@ -40,11 +40,21 @@ xcodebuild \
   -project JobRadar.xcodeproj \
   -scheme JobRadar \
   -destination 'generic/platform=iOS Simulator' \
+  -skipPackagePluginValidation \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
 `project.yml` is the source of truth. Run `xcodegen generate` after changing
 packages, build settings, assets, entitlements, or Info.plist properties.
+
+Orbit is a universal app. On an iPad in a regular-width window, a sidebar
+replaces the iPhone dock and screens keep a readable column width. Slide Over
+and narrow Split View windows use the iPhone layout. CarPlay settings are
+hidden on iPad, and the watch app pairs only with iPhone.
+
+The first time you build in Xcode, it asks you to trust mlx-swift's `CudaBuild`
+package plugin; choose **Trust & Enable**. The plugin does nothing on Apple
+platforms. Command-line builds pass `-skipPackagePluginValidation` instead.
 
 ## Google Cloud setup
 
@@ -105,6 +115,56 @@ upcoming items. A separate Reminders widget shows upcoming reminders. App Intent
 allow completion from either widget, plus buttons open the matching editor, and
 Siri/Shortcuts can create To Dos or timed reminders directly in Orbit.
 
+## CarPlay
+
+Orbit includes a CarPlay screen-mirroring pipeline modeled on the public design
+used by video-in-car apps:
+
+1. The user explicitly starts **Orbit Screen Broadcast** from Orbit Settings.
+   Apple's ReplayKit consent sheet is always shown; capture cannot start
+   silently.
+2. The embedded broadcast extension captures the iPhone display and app audio,
+   encodes them as a rolling fragmented-MP4 HLS stream, and stores only the
+   latest segments in the shared App Group cache.
+3. The main app serves that stream over a private local HTTP listener advertised
+   on the active CarPlay link and plays it with `AVPlayer`.
+4. The CarPlay list item requests `.video` presentation with
+   `CPPlaybackConfiguration`, allowing CarPlay to put the live stream on a
+   compatible vehicle display. External playback uses aspect fill, so it adapts
+   to each car display without distortion. A portrait iPhone screen is cropped
+   vertically on a wide car display.
+
+For full-screen video without a portrait phone frame, Settings → CarPlay Videos
+can import an MP4, M4V, or MOV file from Files or save a direct HTTPS HLS/MP4
+link. Local HTTP links on the user's network are also accepted. Open **Orbit
+Video** on CarPlay and choose a saved video; it plays the original source with
+`AVPlayer` instead of a ReplayKit screen capture. Imported files are copied to
+Application Support so the Files provider need not stay open. Aspect fill may
+crop the edges of videos whose shape differs from the car display. Webpage links
+and protected videos from other apps are not direct media sources.
+
+Protected/DRM video can appear black. CarPlay and the vehicle decide when video
+is available and can switch to audio-only when it becomes unavailable. This is
+for passengers while parked.
+
+To activate the included CarPlay scene for development and distribution:
+
+1. Request the **Video app** CarPlay entitlement from the
+   [Apple CarPlay developer page](https://developer.apple.com/carplay/).
+2. After Apple grants the capability to `com.hetpatel.jobradar`, add
+   `com.apple.developer.carplay-video: true` under the main
+   target's `entitlements.properties` in `project.yml`.
+3. Confirm that App Group `group.com.hetpatel.jobradar` is enabled for both
+   `com.hetpatel.jobradar` and
+   `com.hetpatel.jobradar.screen-broadcast` in the Developer portal.
+4. Regenerate the project, refresh both provisioning profiles, and test with the
+   video-capable CarPlay Simulator plus a real compatible vehicle. The simulator
+   will not show Orbit without the approved video entitlement.
+
+The entitlement is intentionally absent from the checked-in signing file until
+Apple grants it; restricted entitlements that are not in the provisioning
+profile prevent physical-device installation.
+
 ## Finance and Plaid
 
 Finance is a primary tab for balances, credit-card debt, monthly inflow/outflow,
@@ -126,6 +186,51 @@ bank connection.
 For a signed physical-device build, create the App Group in the Apple Developer
 portal and add it to both App IDs (`com.hetpatel.jobradar` and
 `com.hetpatel.jobradar.tasks-widget`). Xcode project entitlements are already set.
+
+## On-device Orbit Chat
+
+Typed Orbit Chat runs on the iPhone or iPad by default. Orbit uses
+[MLX](https://github.com/ml-explore/mlx-swift) to run an open-weights model on
+the GPU, so questions, the Orbit data snapshot, and replies never leave the
+device, and chat works offline. Typed chat needs no OpenAI key; live voice,
+CarPlay, and email scanning still use OpenAI. Settings → Orbit Chat switches
+typed chat to OpenAI.
+
+- **Models:** Settings lists only the models the device has memory for and
+  marks the largest one it runs comfortably as Recommended:
+  - Qwen3 0.6B (about 350 MB) for faster, simpler answers.
+  - Qwen3 1.7B (about 1 GB), recommended on 6 GB iPhones.
+  - Qwen3 4B Instruct 2507 (about 2.3 GB), recommended on 8 GB iPads and
+    iPhones. 6 GB iPhones offer it when iOS lets Orbit use at least about
+    3.8 GB, but it answers slowly there.
+  - Qwen3 8B (about 4.6 GB), offered when iOS lets Orbit use at least about
+    6.1 GB. That depends on the device's per-app limit, not just its RAM, so
+    an 8 GB iPad may or may not offer it. It is recommended on 16 GB iPads.
+
+  All are 4-bit and pinned to exact Hugging Face commits in
+  `LocalModelOption`, so the weights, tokenizer, and chat template cannot
+  change underneath the app. Orbit has the `increased-memory-limit`
+  entitlement, and Settings shows how much memory the device gives Orbit.
+  Apple's built-in Foundation Models require Apple Intelligence (iPhone 15 Pro
+  or newer), so Orbit brings its own model.
+- **First use:** Orbit Chat and Settings offer a one-time download from Hugging
+  Face. Use Wi-Fi and keep Orbit open until it finishes. The files live in
+  Application Support, are excluded from backups, and can be deleted in
+  Settings, either all at once or every model except the selected one.
+- **Prompt budget:** a small local model cannot take the full cloud prompt.
+  `LocalAssistantPrompt` keeps the same privacy rules in a shorter form and fits
+  Orbit data into the model's prompt budget: 2,400 tokens for the small models,
+  3,600 for 4B and 3,200 for 8B. Every list stays represented, lists the
+  question is about get more room, and a trimmed list says how many items were
+  left out.
+- **Physical device only:** MLX needs Metal GPU features the iOS Simulator does
+  not provide, so the simulator shows an "isn't available" state.
+- **Memory and background:** the model loads when chat opens and unloads when
+  chat closes or Orbit moves to the background. iOS does not allow GPU work from
+  background apps, so a reply stops if Orbit leaves the screen.
+
+Console.app shows load time and tokens per second under subsystem
+`com.hetpatel.jobradar`, category `LocalModel`.
 
 ## OpenAI setup and production security
 

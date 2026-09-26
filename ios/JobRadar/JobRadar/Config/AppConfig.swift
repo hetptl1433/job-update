@@ -4,10 +4,24 @@ import Foundation
 /// contains embeddings, image, transcription, and other incompatible models,
 /// so Settings intentionally offers only models that fit this app's requests.
 struct AIModelChoice: Identifiable, Hashable {
+    enum Cost: Int {
+        case unknown, low, medium, high
+
+        var title: String? {
+            switch self {
+            case .unknown: nil
+            case .low: "Low cost"
+            case .medium: "Medium cost"
+            case .high: "Higher cost"
+            }
+        }
+    }
+
     let id: String
     let name: String
     let detail: String
     var isRecommended = false
+    var cost: Cost = .unknown
 }
 
 /// Central, non-secret application configuration.
@@ -16,7 +30,10 @@ struct AIModelChoice: Identifiable, Hashable {
 /// client only knows how to reach *our* backend, which brokers AI requests.
 enum AppConfig {
     static let openAIModelPreferenceKey = "orbit.ai.textModel"
+    static let openAIChatModelPreferenceKey = "orbit.ai.chatModel"
     static let openAIRealtimeModelPreferenceKey = "orbit.ai.realtimeModel"
+    static let assistantEnginePreferenceKey = "orbit.ai.chatEngine"
+    static let localModelPreferenceKey = "orbit.ai.localModel"
 
     /// User-facing product name. Change in this one place to rebrand.
     static let appName = "Orbit"
@@ -91,6 +108,54 @@ enum AppConfig {
         selectedOpenAIRealtimeModel()
     }
 
+    /// Orbit Chat's OpenAI model. Until the owner picks one for chat, chat
+    /// keeps using the email scanning model, as it did before it had its own.
+    static var openAIChatModel: String {
+        selectedOpenAIChatModel()
+    }
+
+    /// Chat offers the newest models first. The email scanner keeps its own
+    /// list, whose models are known to work with its structured requests.
+    static let openAIChatModelChoices: [AIModelChoice] = [
+        AIModelChoice(
+            id: "gpt-6-luna",
+            name: "GPT-6 Luna",
+            detail: "Quick, low-cost answers for everyday questions",
+            isRecommended: true,
+            cost: .low
+        ),
+        AIModelChoice(
+            id: "gpt-6-sol",
+            name: "GPT-6 Sol",
+            detail: "Most capable, for hard questions and planning",
+            cost: .high
+        ),
+        AIModelChoice(
+            id: "gpt-5.6-terra",
+            name: "GPT-5.6 Terra",
+            detail: "Balanced quality and cost",
+            cost: .medium
+        ),
+        AIModelChoice(
+            id: "gpt-5.6-sol",
+            name: "GPT-5.6 Sol",
+            detail: "Previous generation's most capable model",
+            cost: .high
+        ),
+        AIModelChoice(
+            id: "gpt-5.6-luna",
+            name: "GPT-5.6 Luna",
+            detail: "Previous generation's low-cost model",
+            cost: .low
+        ),
+        AIModelChoice(
+            id: "gpt-4o-mini",
+            name: "GPT-4o mini",
+            detail: "Fast and economical, without reasoning",
+            cost: .low
+        )
+    ]
+
     static let openAITextModelChoices: [AIModelChoice] = [
         AIModelChoice(
             id: "gpt-5.6-terra",
@@ -155,8 +220,26 @@ enum AppConfig {
         )
     }
 
+    static func selectedOpenAIChatModel(defaults: UserDefaults = .standard) -> String {
+        selectedValue(
+            forKey: openAIChatModelPreferenceKey,
+            fallback: selectedOpenAIModel(defaults: defaults),
+            defaults: defaults
+        )
+    }
+
     static func textModelChoices(including selected: String) -> [AIModelChoice] {
         choices(openAITextModelChoices, including: selected)
+    }
+
+    static func chatModelChoices(including selected: String) -> [AIModelChoice] {
+        choices(openAIChatModelChoices, including: selected)
+    }
+
+    /// The chat choice for `id`, or a plain entry for a model set elsewhere.
+    static func chatModelChoice(for id: String) -> AIModelChoice {
+        chatModelChoices(including: id).first { $0.id == id }
+            ?? AIModelChoice(id: id, name: id, detail: id)
     }
 
     static func realtimeModelChoices(including selected: String) -> [AIModelChoice] {
